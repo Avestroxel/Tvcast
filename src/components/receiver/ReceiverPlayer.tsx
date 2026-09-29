@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
+import { EmbeddedPlayer } from './EmbeddedPlayer';
+import { embeddedSource, directVideoSource } from '../../lib/media-source';
 import { DeviceInfo, PlaybackState, RemoteCommand } from '../../types';
 import { socketService, SocketService } from '../../lib/socket.ts';
 import { Language, translations } from '../../lib/i18n';
@@ -45,12 +47,13 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   const history = useRef([DEFAULT_DEMO_VIDEO]);
   const historyIndex = useRef(0);
   const navigatingHistory = useRef(false);
+  const mediaKinds = useRef(new Map<string, string>());
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   // Playback state
   const [currentUrl, setCurrentUrl] = useState<string>(DEFAULT_DEMO_VIDEO);
   const [mediaTitle, setMediaTitle] = useState<string>(DEFAULT_DEMO_TITLE);
-  const [contentType, setContentType] = useState<'video' | 'web'>('video');
+  const [contentType, setContentType] = useState<'video' | 'embed' | 'web'>('video');
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
@@ -81,57 +84,6 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     }, 3000);
   };
 
-  // Helper to convert YouTube / Vimeo URLs to embeddable player URLs
-  const getEmbeddableUrl = (url: string): { embedUrl: string; isEmbed: boolean } => {
-    try {
-      const parsed = new URL(url);
-      // YouTube: watch?v=ID or youtu.be/ID
-      if (parsed.hostname === 'youtube.com' || parsed.hostname === 'www.youtube.com') {
-        const videoId = parsed.searchParams.get('v');
-        if (videoId) {
-          return {
-            embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1`,
-            isEmbed: true,
-          };
-        }
-      } else if (parsed.hostname === 'youtu.be') {
-        const videoId = parsed.pathname.slice(1);
-        if (videoId) {
-          return {
-            embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1`,
-            isEmbed: true,
-          };
-        }
-      } else if (parsed.hostname === 'vimeo.com' || parsed.hostname === 'www.vimeo.com') {
-        const parts = parsed.pathname.split('/').filter(Boolean);
-        if (parts.length > 0) {
-          const videoId = parts[parts.length - 1];
-          return {
-            embedUrl: `https://player.vimeo.com/video/${videoId}?autoplay=1`,
-            isEmbed: true,
-          };
-        }
-      }
-    } catch {}
-    return { embedUrl: url, isEmbed: false };
-  };
-
-  // Helper to determine if a URL points directly to an HTML5 video stream
-  const isDirectVideoUrl = (url: string): boolean => {
-    const clean = url.split('?')[0].toLowerCase();
-    return (
-      clean.endsWith('.mp4') ||
-      clean.endsWith('.webm') ||
-      clean.endsWith('.ogv') ||
-      clean.endsWith('.mov') ||
-      clean.endsWith('.m4v') ||
-      clean.endsWith('.m3u8') ||
-      clean.includes('/gtv-videos-bucket/') ||
-      clean.includes('.mp4?') ||
-      clean.includes('.webm?')
-    );
-  };
-
   // Sync playback state to controller over socket
   const broadcastPlaybackState = useCallback(
     (overrides?: Partial<PlaybackState>) => {
@@ -145,7 +97,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         currentUrl,
         mediaTitle,
         contentType,
-        supportsRemoteMedia: contentType === 'video',
+        supportsRemoteMedia: contentType === 'video' || contentType === 'embed',
         lastUpdated: Date.now(),
         ...overrides,
       };
@@ -244,12 +196,14 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     async (cmd: RemoteCommand) => {
       setShowHud(true);
       const video = videoRef.current;
+      if (contentType === 'embed' && ['PLAY', 'PAUSE', 'TOGGLE_PLAYBACK', 'SEEK', 'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME', 'VOLUME_UP', 'VOLUME_DOWN', 'MUTE', 'UNMUTE', 'REFRESH'].includes(cmd.action)) return;
 
       switch (cmd.action) {
         case 'OPEN_URL': {
           if (!cmd.url) return;
           const url = cmd.url.trim();
           setMediaError(null);
+          if (typeof cmd.value === 'string') mediaKinds.current.set(url, cmd.value);
           if (!navigatingHistory.current) {
             history.current = history.current.slice(0, historyIndex.current + 1);
             history.current.push(url);
@@ -258,7 +212,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           navigatingHistory.current = false;
           showToast(`Opening: ${url}`);
 
-          if (isDirectVideoUrl(url)) {
+          if (directVideoSource(url) || mediaKinds.current.get(url) === 'video') {
             pendingPlay.current = true;
             setContentType('video');
             setCurrentUrl(url);
@@ -273,17 +227,16 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
               attemptPlay(video);
             }
           } else {
-            // Check if YouTube / Vimeo embed
-            const embedInfo = getEmbeddableUrl(url);
-            setContentType('web');
-            setCurrentUrl(embedInfo.embedUrl);
-            setMediaTitle(embedInfo.isEmbed ? 'Embedded Video Stream' : url);
+            const embed = embeddedSource(url);
+            setContentType(embed ? 'embed' : 'web');
+            setCurrentUrl(embed?.url || url);
+            setMediaTitle(embed ? `${embed.provider === 'youtube' ? 'YouTube' : 'Vimeo'} video` : url);
             setIframeError(false);
+            setIsPlaying(false); setCurrentTime(0); setDuration(0);
             broadcastPlaybackState({
-              contentType: 'web',
-              supportsRemoteMedia: false,
-              currentUrl: embedInfo.embedUrl,
-              mediaTitle: embedInfo.isEmbed ? 'Embedded Video Stream' : url,
+              contentType: embed ? 'embed' : 'web', supportsRemoteMedia: !!embed,
+              currentUrl: embed?.url || url, mediaTitle: embed ? 'Loading video…' : url,
+              playing: false, currentTime: 0, duration: 0, error: null,
             });
           }
           break;
@@ -498,6 +451,16 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     };
   }, [service, handleRemoteCommand]);
 
+  const handleEmbeddedState = useCallback((state: Partial<PlaybackState>) => {
+    if (state.playing !== undefined) setIsPlaying(state.playing);
+    if (state.currentTime !== undefined) setCurrentTime(state.currentTime);
+    if (state.duration !== undefined) setDuration(state.duration);
+    if (state.volume !== undefined) setVolume(state.volume);
+    if (state.muted !== undefined) setIsMuted(state.muted);
+    if (state.mediaTitle !== undefined) setMediaTitle(state.mediaTitle);
+    broadcastPlaybackState({ ...state, contentType: 'embed' });
+  }, [broadcastPlaybackState]);
+
   // Initial video setup & HTML5 video element listeners
   useEffect(() => {
     const video = videoRef.current;
@@ -652,7 +615,9 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       )}
 
       {/* Main Content Area */}
-      {contentType === 'video' ? (
+      {contentType === 'embed' && embeddedSource(currentUrl) ? (
+        <EmbeddedPlayer source={embeddedSource(currentUrl)!} sessionId={sessionId} service={service} onState={handleEmbeddedState} />
+      ) : contentType === 'video' ? (
         <div className="relative w-full h-full flex items-center justify-center bg-black">
           <video
             ref={videoRef}
@@ -782,7 +747,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           </div>
 
           {/* Progress Timeline */}
-          {contentType === 'video' && (
+          {(contentType === 'video' || contentType === 'embed') && (
             <div className="w-full flex items-center gap-3" dir="ltr">
               <span className="text-xs font-mono text-zinc-400 w-12 text-right">
                 {formatTime(currentTime)}

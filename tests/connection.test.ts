@@ -20,7 +20,7 @@ async function freePort() {
 async function start(production = false) {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ['--import', 'tsx', 'server.ts', ...(production ? ['--production'] : [])], {
+  const child = spawn(process.execPath, production ? ['build/server.js', '--production'] : ['--import', 'tsx', 'server.ts'], {
     env: { ...process.env, PORT: String(port), NODE_ENV: 'development', DISABLE_HMR: 'false' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -175,4 +175,20 @@ test('frontend SocketService restores its receiver role on reconnect', async () 
     socket.disconnect();
     Reflect.deleteProperty(globalThis, 'window');
   }
+});
+
+
+test('website browser requires pairing and rejects internal network targets', async () => {
+  const unauthorized = await fetch(`${origin}/api/browse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://example.com' }) });
+  assert.equal(unauthorized.status, 403);
+  const receiver = await connect();
+  const controller = await connect();
+  const created = await ack(receiver, 'create_session', { receiverInfo: device });
+  const joined = await ack(controller, 'join_by_id', { sessionId: created.session.sessionId, controllerInfo: device });
+  for (const url of ['https://127.0.0.1', 'https://[::1]', 'https://169.254.169.254', 'https://localhost', 'file:///etc/passwd', 'https://user:pass@example.com']) {
+    const response = await fetch(`${origin}/api/browse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: created.session.sessionId, token: joined.resumeToken, url }) });
+    assert.equal(response.status, 422, url);
+  }
+  const wrongRole = await fetch(`${origin}/api/browse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: created.session.sessionId, token: created.resumeToken, url: 'https://example.com' }) });
+  assert.equal(wrongRole.status, 403);
 });

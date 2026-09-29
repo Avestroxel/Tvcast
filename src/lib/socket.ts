@@ -64,6 +64,10 @@ export class SocketService {
     this.isConnecting = false;
   }
 
+  public sessionCredentials() {
+    return this.activeSession ? { sessionId: this.activeSession.sessionId, token: this.activeSession.token } : null;
+  }
+
   public getSocket(): Socket | null {
     return this.socket;
   }

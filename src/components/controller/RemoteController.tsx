@@ -22,6 +22,8 @@ import {
   Search,
 } from 'lucide-react';
 import { DeviceInfo, PlaybackState, RemoteAction, NavDirection, ConnectionStatus } from '../../types';
+import { WebsiteBrowser } from './WebsiteBrowser';
+import { socketService, type SocketService } from '../../lib/socket';
 import { DPadRemote } from './DPadRemote';
 import { MediaPresets } from './MediaPresets';
 import { Language, translations } from '../../lib/i18n';
@@ -34,6 +36,7 @@ interface RemoteControllerProps {
   onSendCommand: (action: RemoteAction, value?: any, url?: string, direction?: NavDirection) => void;
   onDisconnect: () => void;
   lang?: Language;
+  service?: SocketService;
 }
 
 export const RemoteController: React.FC<RemoteControllerProps> = ({
@@ -43,10 +46,10 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   onSendCommand,
   onDisconnect,
   lang = 'en',
+  service = socketService,
   connectionStatus = 'connected',
 }) => {
   const t = translations[lang] || translations.en;
-  const [urlInput, setUrlInput] = useState<string>('');
   const [localSeekTime, setLocalSeekTime] = useState<number | null>(null);
   const [localVolume, setLocalVolume] = useState<number | null>(null);
   const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
@@ -68,19 +71,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   const displayTime = localSeekTime !== null ? localSeekTime : playbackState.currentTime;
   const displayVolume = localVolume !== null ? localVolume : playbackState.volume;
 
-  const handleOpenUrl = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!urlInput.trim() || connectionStatus !== 'connected') return;
-
-    let targetUrl = urlInput.trim();
-    if (!/^https?:\/\//i.test(targetUrl)) {
-      targetUrl = 'https://' + targetUrl;
-    }
-    onSendCommand('OPEN_URL', undefined, targetUrl);
-  };
-
   const handleSelectPreset = (url: string) => {
-    setUrlInput(url);
     onSendCommand('OPEN_URL', undefined, url);
     setShowPresets(false);
   };
@@ -141,31 +132,11 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
 
       {(!playbackState.supportsRemoteMedia || playbackState.error) && (
         <p role="status" className="text-sm text-amber-300 text-center">
-          {playbackState.error || 'Remote playback is unavailable for this webpage. Use a direct video URL.'}
+          {playbackState.error || 'Remote playback is unavailable for this webpage. Choose a supported video from Browse websites.'}
         </p>
       )}
-      {/* URL Browser Bar */}
-      <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 shadow-xl space-y-3">
-        <form onSubmit={handleOpenUrl} className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-            <input
-              type="text"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              placeholder={t.searchOrUrl}
-              className="w-full bg-[#18181D] border border-white/10 focus:border-[#6D5DFB] rounded-2xl py-2.5 pl-10 pr-3 text-xs sm:text-sm text-white placeholder-zinc-500 outline-none transition"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!urlInput.trim() || connectionStatus !== 'connected'}
-            className="px-4 py-2.5 rounded-2xl bg-[#6D5DFB] hover:bg-[#5B4BE3] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs transition active:scale-95 flex-shrink-0 cursor-pointer shadow-md"
-          >
-            {t.openOnDevice}
-          </button>
-        </form>
-
+      <WebsiteBrowser lang={lang} service={service} disabled={connectionStatus !== 'connected'} onCast={(url, kind) => onSendCommand('OPEN_URL', kind, url)} />
+      <div className="rounded-2xl border border-white/10 bg-[#111114] p-4">
         {/* Quick presets toggle */}
         <div className="flex items-center justify-between pt-1">
           <button

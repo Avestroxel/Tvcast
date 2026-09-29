@@ -25,7 +25,7 @@ export interface PlaybackState {
   fullscreen: boolean;
   currentUrl: string;
   mediaTitle: string;
-  contentType: 'video' | 'web' | 'empty';
+  contentType: 'video' | 'embed' | 'web' | 'empty';
   supportsRemoteMedia: boolean;
   lastUpdated: number;
   error?: string | null;

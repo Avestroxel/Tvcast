@@ -161,6 +161,7 @@ export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
               <RemoteController
                 sessionId={sessionId}
                 controlledDevice={receiverDevice}
+                service={controllerService.current!}
                 playbackState={playbackState}
                 onSendCommand={handleSendCommand}
                 onDisconnect={onClose}

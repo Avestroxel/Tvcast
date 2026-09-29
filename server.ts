@@ -5,6 +5,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { browseWebsite } from './server/website-browser.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,7 @@ interface PairingSession {
   controllerToken: string | null;
   receiverDisconnectTimer?: NodeJS.Timeout;
   controllerDisconnectTimer?: NodeJS.Timeout;
+  browseRequests?: { start: number; count: number };
 }
 
 const app = express();
@@ -113,6 +115,29 @@ app.get('/api/session/:id', (req: Request, res: Response) => {
     receiver: session.receiver,
     status: session.status,
   });
+});
+
+// Only the paired controller can browse public pages through this server.
+app.post('/api/browse', async (req: Request, res: Response) => {
+  const { sessionId, token, url } = req.body || {};
+  const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+  if (!session || !session.controllerToken || token !== session.controllerToken) {
+    res.status(403).json({ error: 'Pair with a receiving device before browsing.' });
+    return;
+  }
+  if (typeof url !== 'string' || url.length > 4096) {
+    res.status(400).json({ error: 'Enter a valid website URL.' });
+    return;
+  }
+  const now = Date.now();
+  if (!session.browseRequests || now - session.browseRequests.start > 60000) session.browseRequests = { start: now, count: 0 };
+  if (session.browseRequests.count++ >= 30) {
+    res.status(429).json({ error: 'Please wait a minute before opening more pages.' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await browseWebsite(url)); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : 'Unable to read this website.' }); }
 });
 
 // Socket.io logic
@@ -434,7 +459,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
