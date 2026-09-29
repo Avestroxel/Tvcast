@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env server.ts",
     "build": "vite build",
-    "start": "tsx --env-file-if-exists=.env server.ts --production",
+    "start": "node server.ts",
     "preview": "npm run start",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
