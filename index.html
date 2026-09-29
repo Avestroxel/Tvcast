@@ -17,7 +17,6 @@
     <script>
       // Cleanly handle Vite HMR WebSocket in AI Studio container environment
       (function() {
-        // Intercept Vite HMR WebSockets to prevent closed-without-opened rejections
         var OriginalWebSocket = window.WebSocket;
         if (OriginalWebSocket) {
           window.WebSocket = function(url, protocols) {
@@ -31,12 +30,29 @@
               var listeners = {};
               var mockWs = {
                 readyState: 1, // OPEN
+                OPEN: 1,
+                CONNECTING: 0,
+                CLOSING: 2,
+                CLOSED: 3,
                 url: url,
                 protocol: protocols || '',
                 extensions: '',
                 bufferedAmount: 0,
                 binaryType: 'blob',
-                send: function() {},
+                send: function(data) {
+                  try {
+                    var parsed = JSON.parse(data);
+                    if (parsed.type === 'ping') {
+                      setTimeout(function() {
+                        if (listeners['message']) {
+                          listeners['message'].forEach(function(cb) {
+                            cb({ data: JSON.stringify({ type: 'pong' }) });
+                          });
+                        }
+                      }, 10);
+                    }
+                  } catch(e) {}
+                },
                 close: function() {
                   mockWs.readyState = 3;
                   if (listeners['close']) {
@@ -47,7 +63,17 @@
                   listeners[event] = listeners[event] || [];
                   listeners[event].push(cb);
                   if (event === 'open') {
-                    setTimeout(function() { cb({ type: 'open' }); }, 15);
+                    setTimeout(function() {
+                      cb({ type: 'open' });
+                      // Instantly dispatch connected payload so Vite client knows HMR is active
+                      setTimeout(function() {
+                        if (listeners['message']) {
+                          listeners['message'].forEach(function(mcb) {
+                            mcb({ data: JSON.stringify({ type: 'connected' }) });
+                          });
+                        }
+                      }, 5);
+                    }, 5);
                   }
                 },
                 removeEventListener: function(event, cb) {
@@ -57,18 +83,20 @@
                 },
                 dispatchEvent: function() { return true; }
               };
+
               setTimeout(function() {
                 if (typeof mockWs.onopen === 'function') mockWs.onopen({ type: 'open' });
-              }, 15);
+              }, 5);
+
               return mockWs;
             }
             return new OriginalWebSocket(url, protocols);
           };
           window.WebSocket.prototype = OriginalWebSocket.prototype;
-          window.WebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
-          window.WebSocket.OPEN = OriginalWebSocket.OPEN;
-          window.WebSocket.CLOSING = OriginalWebSocket.CLOSING;
-          window.WebSocket.CLOSED = OriginalWebSocket.CLOSED;
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
         }
 
         // Suppress any stray WebSocket rejections or console errors from Vite client

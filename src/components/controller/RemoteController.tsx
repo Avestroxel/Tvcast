@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -47,10 +47,22 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   const [urlInput, setUrlInput] = useState<string>('');
   const [localSeekTime, setLocalSeekTime] = useState<number | null>(null);
   const [localVolume, setLocalVolume] = useState<number | null>(null);
+  const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
+  const [optimisticMuted, setOptimisticMuted] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<'media' | 'dpad'>('media');
   const [showPresets, setShowPresets] = useState<boolean>(false);
 
-  // Sync seek slider value
+  // Clear optimistic states when server state updates
+  useEffect(() => {
+    setOptimisticPlaying(null);
+  }, [playbackState.playing]);
+
+  useEffect(() => {
+    setOptimisticMuted(null);
+  }, [playbackState.muted]);
+
+  const currentPlaying = optimisticPlaying !== null ? optimisticPlaying : playbackState.playing;
+  const currentMuted = optimisticMuted !== null ? optimisticMuted : playbackState.muted;
   const displayTime = localSeekTime !== null ? localSeekTime : playbackState.currentTime;
   const displayVolume = localVolume !== null ? localVolume : playbackState.volume;
 
@@ -71,6 +83,24 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
     setShowPresets(false);
   };
 
+  const handleTogglePlayback = () => {
+    setOptimisticPlaying(!currentPlaying);
+    onSendCommand('TOGGLE_PLAYBACK');
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !currentMuted;
+    setOptimisticMuted(nextMuted);
+    onSendCommand(nextMuted ? 'MUTE' : 'UNMUTE');
+  };
+
+  const handleSeekOffset = (seconds: number) => {
+    const target = Math.max(0, Math.min(playbackState.duration || 600, displayTime + seconds));
+    setLocalSeekTime(target);
+    onSendCommand(seconds > 0 ? 'SEEK_FORWARD' : 'SEEK_BACKWARD', Math.abs(seconds));
+    setTimeout(() => setLocalSeekTime(null), 800);
+  };
+
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return '00:00';
     const mins = Math.floor(seconds / 60);
@@ -79,7 +109,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   };
 
   return (
-    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between max-w-lg mx-auto p-4 sm:p-6 pb-8 space-y-6">
+    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between max-w-lg mx-auto p-4 sm:p-6 pb-8 space-y-6 select-none">
       {/* Top Remote Header */}
       <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 sm:p-5 shadow-xl flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -195,42 +225,45 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
               max={playbackState.duration || 100}
               step={1}
               value={displayTime}
-              onChange={(e) => setLocalSeekTime(parseFloat(e.target.value))}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                setLocalSeekTime(val);
+              }}
               onMouseUp={() => {
                 if (localSeekTime !== null) {
                   onSendCommand('SEEK', localSeekTime);
-                  setLocalSeekTime(null);
+                  setTimeout(() => setLocalSeekTime(null), 500);
                 }
               }}
               onTouchEnd={() => {
                 if (localSeekTime !== null) {
                   onSendCommand('SEEK', localSeekTime);
-                  setLocalSeekTime(null);
+                  setTimeout(() => setLocalSeekTime(null), 500);
                 }
               }}
               className="w-full accent-[#6D5DFB] cursor-pointer"
             />
           </div>
 
-          {/* Primary Playback Controls */}
+          {/* Primary Playback Controls with 0ms Optimistic Feedback */}
           <div className="flex items-center justify-center gap-6 sm:gap-8 py-2">
             {/* Seek Back 10s */}
             <button
-              onClick={() => onSendCommand('SEEK_BACKWARD', 10)}
-              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
+              onClick={() => handleSeekOffset(-10)}
+              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-90 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
               title="Rewind 10 Seconds"
             >
               <RotateCcw className="w-6 h-6" />
               <span className="absolute bottom-1 right-2 text-[9px] font-bold text-zinc-400">10</span>
             </button>
 
-            {/* Big Play / Pause Toggle */}
+            {/* Big Play / Pause Toggle with instantaneous state switch */}
             <button
-              onClick={() => onSendCommand('TOGGLE_PLAYBACK')}
+              onClick={handleTogglePlayback}
               className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[#6D5DFB] hover:bg-[#5B4BE3] active:scale-90 text-white flex items-center justify-center transition shadow-[0_0_30px_rgba(109,93,251,0.5)] cursor-pointer focus:outline-none"
-              title={playbackState.playing ? 'Pause' : 'Play'}
+              title={currentPlaying ? 'Pause' : 'Play'}
             >
-              {playbackState.playing ? (
+              {currentPlaying ? (
                 <Pause className="w-10 h-10 fill-white" />
               ) : (
                 <Play className="w-10 h-10 fill-white translate-x-1" />
@@ -239,8 +272,8 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
 
             {/* Seek Forward 10s */}
             <button
-              onClick={() => onSendCommand('SEEK_FORWARD', 10)}
-              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
+              onClick={() => handleSeekOffset(10)}
+              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-90 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
               title="Fast Forward 10 Seconds"
             >
               <RotateCw className="w-6 h-6" />
@@ -253,17 +286,17 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
             <div className="flex items-center justify-between text-xs text-zinc-400">
               <span className="font-semibold uppercase tracking-wider">{t.deviceVolume}</span>
               <span className="font-mono text-white">
-                {playbackState.muted ? t.muted : `${Math.round(displayVolume * 100)}%`}
+                {currentMuted ? t.muted : `${Math.round(displayVolume * 100)}%`}
               </span>
             </div>
 
             <div className="flex items-center gap-3" dir="ltr">
               <button
-                onClick={() => onSendCommand(playbackState.muted ? 'UNMUTE' : 'MUTE')}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white transition cursor-pointer"
-                title={playbackState.muted ? t.unmute : t.muteAudio}
+                onClick={handleToggleMute}
+                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 active:scale-90 text-zinc-300 hover:text-white transition cursor-pointer"
+                title={currentMuted ? t.unmute : t.muteAudio}
               >
-                {playbackState.muted || displayVolume === 0 ? (
+                {currentMuted || displayVolume === 0 ? (
                   <VolumeX className="w-5 h-5 text-red-400" />
                 ) : displayVolume < 0.5 ? (
                   <Volume1 className="w-5 h-5" />
@@ -277,10 +310,11 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
                 min={0}
                 max={1}
                 step={0.05}
-                value={playbackState.muted ? 0 : displayVolume}
+                value={currentMuted ? 0 : displayVolume}
                 onChange={(e) => {
                   const vol = parseFloat(e.target.value);
                   setLocalVolume(vol);
+                  setOptimisticMuted(false);
                   onSendCommand('SET_VOLUME', vol);
                 }}
                 onMouseUp={() => setLocalVolume(null)}
@@ -290,15 +324,25 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
 
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => onSendCommand('VOLUME_DOWN')}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 text-xs font-bold text-white transition cursor-pointer"
+                  onClick={() => {
+                    const nextVol = Math.max(0, displayVolume - 0.1);
+                    setLocalVolume(nextVol);
+                    onSendCommand('VOLUME_DOWN');
+                    setTimeout(() => setLocalVolume(null), 400);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-90 text-xs font-bold text-white transition cursor-pointer"
                   title="Volume Down"
                 >
                   -
                 </button>
                 <button
-                  onClick={() => onSendCommand('VOLUME_UP')}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 text-xs font-bold text-white transition cursor-pointer"
+                  onClick={() => {
+                    const nextVol = Math.min(1, displayVolume + 0.1);
+                    setLocalVolume(nextVol);
+                    onSendCommand('VOLUME_UP');
+                    setTimeout(() => setLocalVolume(null), 400);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-90 text-xs font-bold text-white transition cursor-pointer"
                   title="Volume Up"
                 >
                   +
@@ -333,14 +377,14 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
             </button>
 
             <button
-              onClick={() => onSendCommand(playbackState.muted ? 'UNMUTE' : 'MUTE')}
+              onClick={handleToggleMute}
               className={`flex items-center justify-center gap-2 py-3 rounded-2xl border font-semibold text-xs sm:text-sm transition cursor-pointer active:scale-95 ${
-                playbackState.muted
+                currentMuted
                   ? 'bg-red-500/15 border-red-500/40 text-red-300'
                   : 'bg-[#18181D] hover:bg-[#202027] border-white/10 text-white'
               }`}
             >
-              {playbackState.muted ? (
+              {currentMuted ? (
                 <>
                   <VolumeX className="w-4 h-4 text-red-400" />
                   <span>{t.unmute}</span>
