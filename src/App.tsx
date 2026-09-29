@@ -43,7 +43,7 @@ export default function App() {
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     playing: false,
     currentTime: 0,
-    duration: 596,
+    duration: 0,
     volume: 0.8,
     muted: false,
     fullscreen: false,
@@ -95,7 +95,7 @@ export default function App() {
 
   // Register PWA service worker
   useEffect(() => {
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+    if ('serviceWorker' in navigator && import.meta.env.PROD) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('Service worker registration failed:', err);
       });
@@ -108,7 +108,7 @@ export default function App() {
 
     const handleConnect = () => {
       if (session) {
-        setConnectionStatus('connected');
+        setConnectionStatus('reconnecting');
       }
     };
 
@@ -122,7 +122,7 @@ export default function App() {
     const handleControllerConnected = ({ controller }: { controller: DeviceInfo }) => {
       setPeerDevice(controller);
       setConnectionStatus('connected');
-      setReceiverStep('connected');
+      setReceiverStep('player');
     };
 
     // Peer disconnected with grace period
@@ -140,6 +140,25 @@ export default function App() {
       setPairingError(lang === 'ku' ? 'کاتی کۆدەکە بەسەرچوو. تکایە کۆدێکی نوێ دروست بکە.' : 'Pairing session expired. Please generate a new code.');
     };
 
+    const handleResumed = () => setConnectionStatus(peerDevice ? 'connected' : 'idle');
+    const handleEnded = () => {
+      setSession(null);
+      setPeerDevice(null);
+      setConnectionStatus('disconnected');
+      setPairingError('Session ended. Please pair again.');
+      setReceiverStep('pairing');
+    };
+    const handleControllerLeft = () => {
+      setPeerDevice(null);
+      setConnectionStatus('idle');
+    };
+    window.addEventListener('castsync:resumed', handleResumed);
+    window.addEventListener('castsync:resume-failed', handleEnded);
+    socket.on('peer_reconnected', handleResumed);
+    socket.on('session_terminated', handleEnded);
+    socket.on('receiver_disconnected', handleEnded);
+    socket.on('controller_left', handleControllerLeft);
+    socket.on('controller_disconnected', handleControllerLeft);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('controller_connected', handleControllerConnected);
@@ -148,6 +167,13 @@ export default function App() {
     socket.on('session_expired', handleSessionExpired);
 
     return () => {
+      window.removeEventListener('castsync:resumed', handleResumed);
+      window.removeEventListener('castsync:resume-failed', handleEnded);
+      socket.off('peer_reconnected', handleResumed);
+      socket.off('session_terminated', handleEnded);
+      socket.off('receiver_disconnected', handleEnded);
+      socket.off('controller_left', handleControllerLeft);
+      socket.off('controller_disconnected', handleControllerLeft);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('controller_connected', handleControllerConnected);
@@ -155,10 +181,14 @@ export default function App() {
       socket.off('playback_state_updated', handlePlaybackStateUpdated);
       socket.off('session_expired', handleSessionExpired);
     };
-  }, [session, lang]);
+  }, [session, lang, peerDevice]);
 
   // Start Receiver mode: create pairing session
   const handleStartReceiver = useCallback(async () => {
+    if (session) socketService.leaveSession(session.sessionId, 'receiver');
+    setSession(null);
+    setPeerDevice(null);
+    setPairingError(null);
     setIsGenerating(true);
     setMode('receiver');
     setReceiverStep('pairing');
@@ -172,10 +202,11 @@ export default function App() {
     } catch (err: any) {
       console.error('Failed to create session:', err);
       setConnectionStatus('disconnected');
+      setPairingError(err.message || 'Unable to connect to server');
     } finally {
       setIsGenerating(false);
     }
-  }, [currentDevice]);
+  }, [currentDevice, session]);
 
   // Controller joins by 6-digit code
   const handleJoinByCode = async (code: string) => {
@@ -249,6 +280,9 @@ export default function App() {
         onOpenSplitDemo={() => setShowSplitSimulator(true)}
       />
 
+      {pairingError && mode === 'receiver' && (
+        <div role="alert" className="p-4 text-center text-amber-300">{pairingError}</div>
+      )}
       {/* Main Content Router */}
       <main className="flex-1 flex flex-col">
         {mode === 'home' && (
@@ -300,7 +334,7 @@ export default function App() {
         {/* Controller Flow */}
         {mode === 'controller' && (
           <>
-            {connectionStatus !== 'connected' || !session ? (
+            {!session ? (
               <ControllerPairing
                 controllerDevice={currentDevice}
                 isPairing={isPairing}
@@ -314,6 +348,7 @@ export default function App() {
                 sessionId={session.sessionId}
                 controlledDevice={peerDevice}
                 playbackState={playbackState}
+                connectionStatus={connectionStatus}
                 lang={lang}
                 onSendCommand={handleSendCommand}
                 onDisconnect={handleExit}

@@ -26,7 +26,10 @@ interface PairingSession {
   controller: DeviceInfo | null;
   controllerSocketId: string | null;
   status: 'waiting' | 'connected' | 'expired';
-  disconnectTimer?: NodeJS.Timeout;
+  receiverToken: string;
+  controllerToken: string | null;
+  receiverDisconnectTimer?: NodeJS.Timeout;
+  controllerDisconnectTimer?: NodeJS.Timeout;
 }
 
 const app = express();
@@ -51,14 +54,14 @@ const codeToSessionId = new Map<string, string>();
 const attemptLimits = new Map<string, { count: number; lastAttempt: number }>();
 
 function generateSessionId(): string {
-  return 'room_' + crypto.randomBytes(4).toString('hex');
+  return 'room_' + crypto.randomBytes(16).toString('hex');
 }
 
 function generatePairingCode(): string {
   let code = '';
   do {
     // Generate 6 digit number
-    code = Math.floor(100000 + Math.random() * 900000).toString();
+    code = crypto.randomInt(100000, 1000000).toString();
   } while (codeToSessionId.has(code));
   return code;
 }
@@ -66,9 +69,9 @@ function generatePairingCode(): string {
 function cleanupSession(sessionId: string) {
   const session = sessions.get(sessionId);
   if (session) {
-    if (session.disconnectTimer) {
-      clearTimeout(session.disconnectTimer);
-    }
+    clearTimeout(session.receiverDisconnectTimer);
+    clearTimeout(session.controllerDisconnectTimer);
+    io.in(sessionId).socketsLeave(sessionId);
     codeToSessionId.delete(session.pairingCode);
     sessions.delete(sessionId);
   }
@@ -100,7 +103,7 @@ app.get('/api/session/:id', (req: Request, res: Response) => {
   if (!session) {
     return res.status(404).json({ error: 'Session not found or expired' });
   }
-  if (Date.now() > session.expiresAt) {
+  if (session.status === 'waiting' && Date.now() > session.expiresAt) {
     cleanupSession(session.sessionId);
     return res.status(410).json({ error: 'Session has expired' });
   }
@@ -114,6 +117,60 @@ app.get('/api/session/:id', (req: Request, res: Response) => {
 // Socket.io logic
 io.on('connection', (socket: Socket) => {
   const clientIp = socket.handshake.address;
+  const acknowledgedEvents = new Set(['create_session', 'join_by_code', 'join_by_id', 'resume_session']);
+  socket.use(([event, payload, callback], next) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+        (acknowledgedEvents.has(event) && typeof callback !== 'function')) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Invalid request.' });
+      return;
+    }
+    if (event === 'create_session' || event === 'join_by_code' || event === 'join_by_id') {
+      const info = event === 'create_session' ? payload.receiverInfo : payload.controllerInfo;
+      if (!info || typeof info.id !== 'string' || typeof info.name !== 'string' ||
+          info.name.length > 120 || typeof info.type !== 'string') {
+        callback({ success: false, error: 'Invalid device information.' });
+        return;
+      }
+    }
+    if (event === 'join_by_code' || event === 'join_by_id') {
+      const now = Date.now();
+      const limit = attemptLimits.get(clientIp);
+      const current = !limit || now - limit.lastAttempt >= 60000 ? { count: 0, lastAttempt: now } : limit;
+      if (current.count >= 10) {
+        callback({ success: false, error: 'Too many attempts. Please wait 1 minute.' });
+        return;
+      }
+      current.count++;
+      attemptLimits.set(clientIp, current);
+    }
+    next();
+  });
+
+  // A private token restores the same role after a transient network loss.
+  socket.on('resume_session', ({ sessionId, role, token } = {}, callback) => {
+    const session = sessions.get(sessionId);
+    const isReceiver = role === 'receiver';
+    const expected = isReceiver ? session?.receiverToken : session?.controllerToken;
+    if (!session || !expected || token !== expected || !['receiver', 'controller'].includes(role)) {
+      return callback({ success: false, error: 'Session ended. Please pair again.' });
+    }
+    if (session.status === 'waiting' && Date.now() > session.expiresAt) {
+      cleanupSession(sessionId);
+      return callback({ success: false, error: 'Pairing session expired.' });
+    }
+    const oldId = isReceiver ? session.receiverSocketId : session.controllerSocketId;
+    if (oldId && oldId !== socket.id) io.sockets.sockets.get(oldId)?.leave(sessionId);
+    if (isReceiver) {
+      clearTimeout(session.receiverDisconnectTimer);
+      session.receiverSocketId = socket.id;
+    } else {
+      clearTimeout(session.controllerDisconnectTimer);
+      session.controllerSocketId = socket.id;
+    }
+    socket.join(sessionId);
+    callback({ success: true });
+    socket.to(sessionId).emit('peer_reconnected', { role });
+  });
 
   // Receiver creates pairing session
   socket.on('create_session', ({ receiverInfo }, callback) => {
@@ -133,6 +190,8 @@ io.on('connection', (socket: Socket) => {
         controller: null,
         controllerSocketId: null,
         status: 'waiting',
+        receiverToken: crypto.randomBytes(32).toString('hex'),
+        controllerToken: null,
       };
 
       sessions.set(sessionId, session);
@@ -152,6 +211,7 @@ io.on('connection', (socket: Socket) => {
 
       callback({
         success: true,
+        resumeToken: session.receiverToken,
         session: {
           sessionId,
           pairingCode,
@@ -171,18 +231,6 @@ io.on('connection', (socket: Socket) => {
   socket.on('join_by_code', ({ code, controllerInfo }, callback) => {
     const cleanCode = String(code).trim().replace(/\s+/g, '');
 
-    // Simple brute-force prevention
-    const limit = attemptLimits.get(clientIp) || { count: 0, lastAttempt: Date.now() };
-    if (Date.now() - limit.lastAttempt > 60000) {
-      limit.count = 0;
-    }
-    if (limit.count > 10) {
-      return callback({ success: false, error: 'Too many attempts. Please wait 1 minute.' });
-    }
-    limit.count++;
-    limit.lastAttempt = Date.now();
-    attemptLimits.set(clientIp, limit);
-
     const sessionId = codeToSessionId.get(cleanCode);
     if (!sessionId) {
       return callback({ success: false, error: 'Invalid pairing code. Please check and try again.' });
@@ -193,16 +241,16 @@ io.on('connection', (socket: Socket) => {
       return callback({ success: false, error: 'Session not found or expired.' });
     }
 
-    if (Date.now() > session.expiresAt) {
+    if (session.status === 'waiting' && Date.now() > session.expiresAt) {
       cleanupSession(sessionId);
       return callback({ success: false, error: 'This pairing code has expired.' });
     }
 
-    if (session.disconnectTimer) {
-      clearTimeout(session.disconnectTimer);
-      delete session.disconnectTimer;
+    if (session.status !== 'waiting' || session.receiverSocketId === socket.id) {
+      return callback({ success: false, error: 'This session already has a controller.' });
     }
 
+    session.controllerToken = crypto.randomBytes(32).toString('hex');
     session.controller = controllerInfo;
     session.controllerSocketId = socket.id;
     session.status = 'connected';
@@ -214,6 +262,7 @@ io.on('connection', (socket: Socket) => {
 
     callback({
       success: true,
+      resumeToken: session.controllerToken,
       session: {
         sessionId: session.sessionId,
         pairingCode: session.pairingCode,
@@ -233,16 +282,16 @@ io.on('connection', (socket: Socket) => {
       return callback({ success: false, error: 'Session not found or has expired.' });
     }
 
-    if (Date.now() > session.expiresAt) {
+    if (session.status === 'waiting' && Date.now() > session.expiresAt) {
       cleanupSession(sessionId);
       return callback({ success: false, error: 'This session has expired.' });
     }
 
-    if (session.disconnectTimer) {
-      clearTimeout(session.disconnectTimer);
-      delete session.disconnectTimer;
+    if (session.status !== 'waiting' || session.receiverSocketId === socket.id) {
+      return callback({ success: false, error: 'This session already has a controller.' });
     }
 
+    session.controllerToken = crypto.randomBytes(32).toString('hex');
     session.controller = controllerInfo;
     session.controllerSocketId = socket.id;
     session.status = 'connected';
@@ -254,6 +303,7 @@ io.on('connection', (socket: Socket) => {
 
     callback({
       success: true,
+      resumeToken: session.controllerToken,
       session: {
         sessionId: session.sessionId,
         pairingCode: session.pairingCode,
@@ -271,11 +321,20 @@ io.on('connection', (socket: Socket) => {
     const session = sessions.get(sessionId);
     if (!session) return;
 
-    // Validate command structure
-    if (!command || !command.action) return;
+    if (session.controllerSocketId !== socket.id) return;
+
+    const actions = new Set(['OPEN_URL', 'PLAY', 'PAUSE', 'TOGGLE_PLAYBACK', 'SEEK',
+      'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME', 'VOLUME_UP', 'VOLUME_DOWN',
+      'MUTE', 'UNMUTE', 'FULLSCREEN', 'EXIT_FULLSCREEN', 'BACK', 'FORWARD',
+      'REFRESH', 'HOME', 'NAVIGATE', 'DISCONNECT']);
+    if (!command || command.type !== 'command' || !actions.has(command.action)) return;
+    if (['SEEK', 'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME'].includes(command.action) &&
+        (typeof command.value !== 'number' || !Number.isFinite(command.value) || command.value < 0 ||
+         (command.action === 'SET_VOLUME' && command.value > 1))) return;
+    if (command.action === 'NAVIGATE' && !['up', 'down', 'left', 'right', 'ok', 'back', 'home', 'menu', 'enter', 'escape'].includes(command.direction)) return;
 
     // If opening a URL, validate against dangerous schemes
-    if (command.action === 'OPEN_URL' && command.url) {
+    if (command.action === 'OPEN_URL') {
       if (!isSafeUrl(command.url)) {
         socket.emit('command_error', {
           message: 'Security error: Only http:// and https:// URLs are permitted.',
@@ -285,7 +344,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     // Forward to receiver
-    socket.to(sessionId).emit('execute_command', command);
+    io.to(session.receiverSocketId).emit('execute_command', command);
   });
 
   // Relay playback state updates from receiver to controller
@@ -293,7 +352,8 @@ io.on('connection', (socket: Socket) => {
     const session = sessions.get(sessionId);
     if (!session) return;
 
-    socket.to(sessionId).emit('playback_state_updated', state);
+    if (session.receiverSocketId !== socket.id || !state || typeof state !== 'object') return;
+    if (session.controllerSocketId) io.to(session.controllerSocketId).emit('playback_state_updated', state);
   });
 
   // Graceful user leave
@@ -301,10 +361,11 @@ io.on('connection', (socket: Socket) => {
     const session = sessions.get(sessionId);
     if (!session) return;
 
-    if (role === 'receiver') {
+    if (role === 'receiver' && session.receiverSocketId === socket.id) {
       socket.to(sessionId).emit('receiver_disconnected', { reason: 'Receiver ended session' });
       cleanupSession(sessionId);
-    } else {
+    } else if (role === 'controller' && session.controllerSocketId === socket.id) {
+      session.controllerToken = null;
       session.controller = null;
       session.controllerSocketId = null;
       session.status = 'waiting';
@@ -324,7 +385,7 @@ io.on('connection', (socket: Socket) => {
         });
 
         // Grace period of 30 seconds
-        session.disconnectTimer = setTimeout(() => {
+        session.receiverDisconnectTimer = setTimeout(() => {
           socket.to(sessionId).emit('session_terminated', {
             reason: 'Receiver did not reconnect within grace period.',
           });
@@ -337,10 +398,12 @@ io.on('connection', (socket: Socket) => {
           message: 'Controller device lost connection.',
         });
 
-        session.disconnectTimer = setTimeout(() => {
+        session.controllerDisconnectTimer = setTimeout(() => {
+          session.controllerToken = null;
           session.controller = null;
           session.controllerSocketId = null;
           session.status = 'waiting';
+          if (Date.now() > session.expiresAt) cleanupSession(sessionId);
           socket.to(sessionId).emit('controller_left');
         }, 30000);
       }
@@ -349,7 +412,7 @@ io.on('connection', (socket: Socket) => {
 });
 
 // Configure Vite integration
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
@@ -358,9 +421,12 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: {
-          server: server,
-          clientPort: 443,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        ws: {
+          server,
+          ...(process.env.HMR_HOST ? { host: process.env.HMR_HOST } : {}),
+          ...(process.env.HMR_PROTOCOL ? { protocol: process.env.HMR_PROTOCOL as 'ws' | 'wss' } : {}),
+          ...(process.env.HMR_CLIENT_PORT ? { clientPort: Number(process.env.HMR_CLIENT_PORT) } : {}),
         },
       },
       appType: 'spa',
@@ -379,4 +445,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('Unable to start CastSync:', error);
+  process.exit(1);
+});

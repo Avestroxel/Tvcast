@@ -15,7 +15,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { DeviceInfo, PlaybackState, RemoteCommand } from '../../types';
-import { socketService } from '../../lib/socket.ts';
+import { socketService, SocketService } from '../../lib/socket.ts';
 import { Language, translations } from '../../lib/i18n';
 
 interface ReceiverPlayerProps {
@@ -23,6 +23,7 @@ interface ReceiverPlayerProps {
   controllerDevice: DeviceInfo | null;
   onDisconnect: () => void;
   lang?: Language;
+  service?: SocketService;
 }
 
 // Preset default video for instant demonstration
@@ -34,11 +35,17 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   controllerDevice,
   onDisconnect,
   lang = 'en',
+  service = socketService,
 }) => {
   const t = translations[lang] || translations.en;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const pendingPlay = useRef(false);
+  const history = useRef([DEFAULT_DEMO_VIDEO]);
+  const historyIndex = useRef(0);
+  const navigatingHistory = useRef(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   // Playback state
   const [currentUrl, setCurrentUrl] = useState<string>(DEFAULT_DEMO_VIDEO);
@@ -79,7 +86,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     try {
       const parsed = new URL(url);
       // YouTube: watch?v=ID or youtu.be/ID
-      if (parsed.hostname.includes('youtube.com')) {
+      if (parsed.hostname === 'youtube.com' || parsed.hostname === 'www.youtube.com') {
         const videoId = parsed.searchParams.get('v');
         if (videoId) {
           return {
@@ -87,7 +94,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
             isEmbed: true,
           };
         }
-      } else if (parsed.hostname.includes('youtu.be')) {
+      } else if (parsed.hostname === 'youtu.be') {
         const videoId = parsed.pathname.slice(1);
         if (videoId) {
           return {
@@ -95,7 +102,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
             isEmbed: true,
           };
         }
-      } else if (parsed.hostname.includes('vimeo.com')) {
+      } else if (parsed.hostname === 'vimeo.com' || parsed.hostname === 'www.vimeo.com') {
         const parts = parsed.pathname.split('/').filter(Boolean);
         if (parts.length > 0) {
           const videoId = parts[parts.length - 1];
@@ -142,9 +149,9 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         lastUpdated: Date.now(),
         ...overrides,
       };
-      socketService.sendPlaybackState(sessionId, state);
+      service.sendPlaybackState(sessionId, state);
     },
-    [sessionId, isPlaying, currentTime, duration, volume, isMuted, isFullscreen, currentUrl, mediaTitle, contentType]
+    [service, sessionId, isPlaying, currentTime, duration, volume, isMuted, isFullscreen, currentUrl, mediaTitle, contentType]
   );
 
   // Monitor fullscreen change events
@@ -173,6 +180,10 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         await elem.requestFullscreen();
       } else if ((elem as any).webkitRequestFullscreen) {
         await (elem as any).webkitRequestFullscreen();
+      } else if (videoRef.current && (videoRef.current as any).webkitEnterFullscreen) {
+        (videoRef.current as any).webkitEnterFullscreen();
+      } else {
+        throw new Error('Fullscreen is not supported by this browser.');
       }
       setIsFullscreen(true);
       broadcastPlaybackState({ fullscreen: true });
@@ -208,7 +219,11 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       })
       .catch((err) => {
         console.warn('Autoplay with sound prevented, attempting muted play:', err);
-        // Autoplay muted is allowed by all major browsers
+        if (err.name !== 'NotAllowedError') {
+          setMediaError('Unable to play this video. Check the URL and supported format.');
+          return;
+        }
+        // Try muted playback when autoplay with audio is blocked.
         video.muted = true;
         setIsMuted(true);
         video
@@ -234,18 +249,27 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         case 'OPEN_URL': {
           if (!cmd.url) return;
           const url = cmd.url.trim();
+          setMediaError(null);
+          if (!navigatingHistory.current) {
+            history.current = history.current.slice(0, historyIndex.current + 1);
+            history.current.push(url);
+            historyIndex.current = history.current.length - 1;
+          }
+          navigatingHistory.current = false;
           showToast(`Opening: ${url}`);
 
           if (isDirectVideoUrl(url)) {
+            pendingPlay.current = true;
             setContentType('video');
             setCurrentUrl(url);
             const derivedTitle = url.split('/').pop()?.split('?')[0] || 'Media Stream';
-            setMediaTitle(decodeURIComponent(derivedTitle));
+            try { setMediaTitle(decodeURIComponent(derivedTitle)); } catch { setMediaTitle(derivedTitle); }
             setIframeError(false);
 
             if (video) {
               video.src = url;
               video.load();
+              pendingPlay.current = false;
               attemptPlay(video);
             }
           } else {
@@ -420,6 +444,16 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           break;
         }
 
+        case 'BACK':
+        case 'FORWARD': {
+          const target = historyIndex.current + (cmd.action === 'BACK' ? -1 : 1);
+          if (target < 0 || target >= history.current.length) return;
+          historyIndex.current = target;
+          navigatingHistory.current = true;
+          await handleRemoteCommand({ ...cmd, action: 'OPEN_URL', url: history.current[target] });
+          break;
+        }
+
         case 'REFRESH': {
           showToast('Reloading media');
           if (contentType === 'video' && video) {
@@ -454,7 +488,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
   // Set up socket listener for commands
   useEffect(() => {
-    const socket = socketService.getSocket();
+    const socket = service.getSocket();
     if (!socket) return;
 
     socket.on('execute_command', handleRemoteCommand);
@@ -462,7 +496,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     return () => {
       socket.off('execute_command', handleRemoteCommand);
     };
-  }, [handleRemoteCommand]);
+  }, [service, handleRemoteCommand]);
 
   // Initial video setup & HTML5 video element listeners
   useEffect(() => {
@@ -471,6 +505,10 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
     video.volume = volume;
     video.muted = isMuted;
+    if (pendingPlay.current) {
+      pendingPlay.current = false;
+      attemptPlay(video);
+    }
 
     const onPlay = () => {
       setIsPlaying(true);
@@ -525,7 +563,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
     };
-  }, [broadcastPlaybackState]);
+  }, [broadcastPlaybackState, contentType]);
 
   // Periodic heartbeat broadcast
   useEffect(() => {
@@ -540,6 +578,15 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     }, 1000);
     return () => clearInterval(interval);
   }, [contentType, broadcastPlaybackState]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (fullscreenPrompt) { event.preventDefault(); void triggerFullscreen(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreenPrompt]);
 
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return '00:00';
@@ -584,6 +631,9 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         </div>
       )}
 
+      {mediaError && (
+        <div role="alert" className="absolute top-8 z-40 bg-[#18181D] p-4 rounded-xl text-amber-300">{mediaError}</div>
+      )}
       {/* Unmute Prompt Banner */}
       {unmutePrompt && (
         <div
@@ -609,6 +659,11 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
             src={currentUrl}
             playsInline
             controls={false}
+            onError={() => {
+              const error = 'Unable to load media. Use a direct video URL supported by this browser.';
+              setMediaError(error);
+              broadcastPlaybackState({ playing: false, error });
+            }}
             className="w-full h-full object-contain max-h-screen"
             onClick={() => {
               if (videoRef.current) {
@@ -629,7 +684,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[11px] font-medium flex items-center gap-1">
                 <Info className="w-3 h-3" />
-                <span>Web Player Mode</span>
+                <span>Web View — remote playback unavailable</span>
               </span>
             </div>
           </div>
@@ -651,7 +706,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
                 <h4 className="text-lg font-bold text-white mb-1">Third-Party Security Restriction</h4>
                 <p className="text-sm text-zinc-400 max-w-md">
                   This website does not permit direct embedding or remote media control (CORS / X-Frame-Options).
-                  Navigation controls remain available.
+                  Use a direct video URL or return to the sample video.
                 </p>
                 <button
                   onClick={() => {

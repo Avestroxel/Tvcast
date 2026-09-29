@@ -21,7 +21,7 @@ import {
   ChevronUp,
   Search,
 } from 'lucide-react';
-import { DeviceInfo, PlaybackState, RemoteAction, NavDirection } from '../../types';
+import { DeviceInfo, PlaybackState, RemoteAction, NavDirection, ConnectionStatus } from '../../types';
 import { DPadRemote } from './DPadRemote';
 import { MediaPresets } from './MediaPresets';
 import { Language, translations } from '../../lib/i18n';
@@ -30,6 +30,7 @@ interface RemoteControllerProps {
   sessionId: string;
   controlledDevice: DeviceInfo | null;
   playbackState: PlaybackState;
+  connectionStatus?: ConnectionStatus;
   onSendCommand: (action: RemoteAction, value?: any, url?: string, direction?: NavDirection) => void;
   onDisconnect: () => void;
   lang?: Language;
@@ -42,6 +43,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   onSendCommand,
   onDisconnect,
   lang = 'en',
+  connectionStatus = 'connected',
 }) => {
   const t = translations[lang] || translations.en;
   const [urlInput, setUrlInput] = useState<string>('');
@@ -68,7 +70,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
 
   const handleOpenUrl = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!urlInput.trim()) return;
+    if (!urlInput.trim() || connectionStatus !== 'connected') return;
 
     let targetUrl = urlInput.trim();
     if (!/^https?:\/\//i.test(targetUrl)) {
@@ -84,17 +86,20 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   };
 
   const handleTogglePlayback = () => {
+    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
     setOptimisticPlaying(!currentPlaying);
     onSendCommand('TOGGLE_PLAYBACK');
   };
 
   const handleToggleMute = () => {
+    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
     const nextMuted = !currentMuted;
     setOptimisticMuted(nextMuted);
     onSendCommand(nextMuted ? 'MUTE' : 'UNMUTE');
   };
 
   const handleSeekOffset = (seconds: number) => {
+    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
     const target = Math.max(0, Math.min(playbackState.duration || 600, displayTime + seconds));
     setLocalSeekTime(target);
     onSendCommand(seconds > 0 ? 'SEEK_FORWARD' : 'SEEK_BACKWARD', Math.abs(seconds));
@@ -129,11 +134,16 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-semibold text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{t.online}</span>
+            <span>{connectionStatus === 'connected' ? t.online : 'Reconnecting…'}</span>
           </div>
         </div>
       </div>
 
+      {(!playbackState.supportsRemoteMedia || playbackState.error) && (
+        <p role="status" className="text-sm text-amber-300 text-center">
+          {playbackState.error || 'Remote playback is unavailable for this webpage. Use a direct video URL.'}
+        </p>
+      )}
       {/* URL Browser Bar */}
       <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 shadow-xl space-y-3">
         <form onSubmit={handleOpenUrl} className="flex gap-2">
@@ -149,7 +159,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
           </div>
           <button
             type="submit"
-            disabled={!urlInput.trim()}
+            disabled={!urlInput.trim() || connectionStatus !== 'connected'}
             className="px-4 py-2.5 rounded-2xl bg-[#6D5DFB] hover:bg-[#5B4BE3] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs transition active:scale-95 flex-shrink-0 cursor-pointer shadow-md"
           >
             {t.openOnDevice}
@@ -412,6 +422,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
         </div>
         <div className="grid grid-cols-4 gap-2">
           <button
+            disabled={connectionStatus !== 'connected'}
             onClick={() => onSendCommand('BACK')}
             className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
             title="Back"
@@ -421,6 +432,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
           </button>
 
           <button
+            disabled={connectionStatus !== 'connected'}
             onClick={() => onSendCommand('FORWARD')}
             className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
             title="Forward"
@@ -430,6 +442,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
           </button>
 
           <button
+            disabled={connectionStatus !== 'connected'}
             onClick={() => onSendCommand('REFRESH')}
             className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
             title="Refresh"
@@ -439,6 +452,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
           </button>
 
           <button
+            disabled={connectionStatus !== 'connected'}
             onClick={() => onSendCommand('HOME')}
             className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-[#A594FD] hover:text-white transition cursor-pointer"
             title="Home"

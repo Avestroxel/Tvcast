@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Smartphone, Tv, Sparkles, X, RotateCcw } from 'lucide-react';
 import { ReceiverPlayer } from '../receiver/ReceiverPlayer';
 import { RemoteController } from '../controller/RemoteController';
 import { DeviceInfo, PlaybackState, RemoteAction, NavDirection } from '../../types';
-import { socketService } from '../../lib/socket';
+import { SocketService } from '../../lib/socket';
 
 interface SplitSimulatorProps {
   onClose: () => void;
@@ -11,6 +11,9 @@ interface SplitSimulatorProps {
 
 export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
   const [sessionId, setSessionId] = useState<string>('');
+  const [receiverService, setReceiverService] = useState<SocketService | null>(null);
+  const controllerService = useRef<SocketService | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
 
   const receiverDevice: DeviceInfo = {
@@ -32,7 +35,7 @@ export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     playing: false,
     currentTime: 0,
-    duration: 596,
+    duration: 0,
     volume: 0.8,
     muted: false,
     fullscreen: false,
@@ -44,42 +47,40 @@ export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
   });
 
   useEffect(() => {
-    // Create live socket session for simulator
+    // Two independent clients preserve the same role separation as real devices.
     let active = true;
-
+    let roomId = '';
+    const receiver = new SocketService(false);
+    const controller = new SocketService(false);
+    controllerService.current = controller;
+    setReceiverService(receiver);
+    const onState = (state: PlaybackState) => { if (active) setPlaybackState(state); };
+    controller.init().on('playback_state_updated', onState);
     async function setupSim() {
       try {
-        const session = await socketService.createSession(receiverDevice);
-        if (!active) return;
-        setSessionId(session.sessionId);
-
-        // Join as controller
-        await socketService.joinById(session.sessionId, controllerDevice);
-        if (!active) return;
-        setIsReady(true);
-      } catch (e) {
-        console.error('Simulator setup error:', e);
+        const session = await receiver.createSession(receiverDevice);
+        roomId = session.sessionId;
+        if (!active) { receiver.leaveSession(roomId, 'receiver'); receiver.disconnect(); return; }
+        setSessionId(roomId);
+        await controller.joinById(roomId, controllerDevice);
+        if (active) setIsReady(true);
+      } catch (error) {
+        if (active) setSetupError(error instanceof Error ? error.message : 'Unable to start simulator');
       }
     }
-
-    setupSim();
-
-    // Listen to playback state update on socket
-    const socket = socketService.getSocket();
-    if (socket) {
-      socket.on('playback_state_updated', (st: PlaybackState) => {
-        if (active) setPlaybackState(st);
-      });
-    }
-
+    void setupSim();
     return () => {
       active = false;
+      if (roomId) receiver.leaveSession(roomId, 'receiver');
+      controller.getSocket()?.off('playback_state_updated', onState);
+      receiver.disconnect();
+      controller.disconnect();
     };
   }, []);
 
   const handleSendCommand = (action: RemoteAction, value?: any, url?: string, direction?: NavDirection) => {
     if (!sessionId) return;
-    socketService.sendCommand(sessionId, {
+    controllerService.current?.sendCommand(sessionId, {
       type: 'command',
       action,
       value,
@@ -130,12 +131,13 @@ export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
             {isReady && sessionId ? (
               <ReceiverPlayer
                 sessionId={sessionId}
+                service={receiverService!}
                 controllerDevice={controllerDevice}
                 onDisconnect={onClose}
               />
             ) : (
               <div className="h-full flex items-center justify-center text-zinc-400 text-sm">
-                Initializing TV simulator socket...
+                {setupError || 'Initializing TV simulator socket...'}
               </div>
             )}
           </div>
@@ -165,7 +167,7 @@ export const SplitSimulator: React.FC<SplitSimulatorProps> = ({ onClose }) => {
               />
             ) : (
               <div className="py-20 text-center text-zinc-400 text-sm">
-                Pairing remote controller...
+                {setupError || 'Pairing remote controller...'}
               </div>
             )}
           </div>

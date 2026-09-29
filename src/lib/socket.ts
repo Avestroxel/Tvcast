@@ -1,9 +1,11 @@
 import { io, Socket } from 'socket.io-client';
 import { DeviceInfo, PairingSession, PlaybackState, RemoteCommand } from '../types';
 
-class SocketService {
+export class SocketService {
+  constructor(private reportLifecycle = true) {}
   private socket: Socket | null = null;
   private isConnecting: boolean = false;
+  private activeSession: { sessionId: string; role: 'receiver' | 'controller'; token: string } | null = null;
 
   public init(): Socket {
     if (this.socket) {
@@ -30,6 +32,17 @@ class SocketService {
 
     this.socket.on('connect', () => {
       this.isConnecting = false;
+      if (this.activeSession) {
+        this.socket!.timeout(10000).emit('resume_session', this.activeSession, (error: Error | null, response: { success: boolean }) => {
+          if (!error && response?.success) {
+            if (this.reportLifecycle) window.dispatchEvent(new Event('castsync:resumed'));
+          }
+          else {
+            this.activeSession = null;
+            if (this.reportLifecycle) window.dispatchEvent(new Event('castsync:resume-failed'));
+          }
+        });
+      }
     });
 
     this.socket.on('connect_error', () => {
@@ -44,6 +57,13 @@ class SocketService {
     return this.socket;
   }
 
+  public disconnect() {
+    this.activeSession = null;
+    this.socket?.disconnect();
+    this.socket = null;
+    this.isConnecting = false;
+  }
+
   public getSocket(): Socket | null {
     return this.socket;
   }
@@ -53,7 +73,7 @@ class SocketService {
     if (s.connected) {
       return Promise.resolve(s);
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       // If already connected or once connected, resolve immediately
       const onConnect = () => {
         cleanup();
@@ -62,8 +82,7 @@ class SocketService {
 
       const timer = setTimeout(() => {
         cleanup();
-        // Resolve anyway with socket so emit can be queued by Socket.IO buffer
-        resolve(s);
+        reject(new Error('Unable to connect to server. Check your connection and server URL.'));
       }, 4000);
 
       const cleanup = () => {
@@ -82,9 +101,10 @@ class SocketService {
         reject(new Error('Connection timed out. Please try again.'));
       }, 10000);
 
-      s.emit('create_session', { receiverInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
+      s.emit('create_session', { receiverInfo }, (response: { success: boolean; session?: PairingSession; resumeToken?: string; error?: string }) => {
         clearTimeout(timeout);
         if (response && response.success && response.session) {
+          this.activeSession = response.resumeToken ? { sessionId: response.session.sessionId, role: 'receiver', token: response.resumeToken } : null;
           resolve(response.session);
         } else {
           reject(new Error(response?.error || 'Failed to create pairing session'));
@@ -100,9 +120,10 @@ class SocketService {
         reject(new Error('Connection timed out. Check pairing code.'));
       }, 10000);
 
-      s.emit('join_by_code', { code: code.replace(/\s+/g, ''), controllerInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
+      s.emit('join_by_code', { code: code.replace(/\s+/g, ''), controllerInfo }, (response: { success: boolean; session?: PairingSession; resumeToken?: string; error?: string }) => {
         clearTimeout(timeout);
         if (response && response.success && response.session) {
+          this.activeSession = response.resumeToken ? { sessionId: response.session.sessionId, role: 'controller', token: response.resumeToken } : null;
           resolve(response.session);
         } else {
           reject(new Error(response?.error || 'Invalid or expired pairing code'));
@@ -118,9 +139,10 @@ class SocketService {
         reject(new Error('Connection timed out. Check QR code.'));
       }, 10000);
 
-      s.emit('join_by_id', { sessionId, controllerInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
+      s.emit('join_by_id', { sessionId, controllerInfo }, (response: { success: boolean; session?: PairingSession; resumeToken?: string; error?: string }) => {
         clearTimeout(timeout);
         if (response && response.success && response.session) {
+          this.activeSession = response.resumeToken ? { sessionId: response.session.sessionId, role: 'controller', token: response.resumeToken } : null;
           resolve(response.session);
         } else {
           reject(new Error(response?.error || 'Invalid or expired session'));
@@ -130,7 +152,7 @@ class SocketService {
   }
 
   public sendCommand(sessionId: string, command: Omit<RemoteCommand, 'timestamp'>) {
-    if (!this.socket) {
+    if (!this.socket?.connected) {
       return;
     }
     const fullCommand: RemoteCommand = {
@@ -141,13 +163,14 @@ class SocketService {
   }
 
   public sendPlaybackState(sessionId: string, state: PlaybackState) {
-    if (!this.socket) {
+    if (!this.socket?.connected) {
       return;
     }
     this.socket.emit('playback_state_update', { sessionId, state });
   }
 
   public leaveSession(sessionId: string, role: 'controller' | 'receiver') {
+    this.activeSession = null;
     if (this.socket) {
       this.socket.emit('leave_session', { sessionId, role });
     }

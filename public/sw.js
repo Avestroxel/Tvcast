@@ -1,5 +1,5 @@
 // Minimal Service Worker for CastSync PWA
-const CACHE_NAME = 'castsync-cache-v1';
+const CACHE_NAME = 'castsync-cache-v2';
 const PRECACHE_ASSETS = ['/', '/index.html', '/icon.svg', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
@@ -27,13 +27,15 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Let socket.io and dynamic queries pass straight to network
-  if (event.request.url.includes('/socket.io/') || event.request.method !== 'GET') {
-    return;
-  }
+  const url = new URL(event.request.url);
+  // Only provide an offline HTML fallback for same-origin page navigation.
+  // Never return HTML for API, media, JavaScript, or Socket.IO requests.
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin ||
+      event.request.mode !== 'navigate' || url.pathname.startsWith('/api/') ||
+      url.pathname.startsWith('/socket.io/')) return;
   event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request).then((res) => res || caches.match('/'));
+    fetch(event.request).catch(async () => {
+      return (await caches.match('/')) || Response.error();
     })
   );
 });
