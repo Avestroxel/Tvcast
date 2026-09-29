@@ -19,12 +19,13 @@ class SocketService {
     const url = typeof window !== 'undefined' ? window.location.origin : '';
 
     this.socket = io(url, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       reconnection: true,
-      reconnectionAttempts: 25,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 10000,
+      timeout: 20000,
     });
 
     this.socket.on('connect', () => {
@@ -33,6 +34,7 @@ class SocketService {
 
     this.socket.on('connect_error', () => {
       this.isConnecting = false;
+      // Do not throw; polling will automatically retry or fallback
     });
 
     this.socket.on('disconnect', () => {
@@ -51,16 +53,25 @@ class SocketService {
     if (s.connected) {
       return Promise.resolve(s);
     }
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (s.connected) resolve(s);
-        else reject(new Error('Connection timed out. Checking server...'));
-      }, 7000);
-
-      s.once('connect', () => {
-        clearTimeout(timeout);
+    return new Promise((resolve) => {
+      // If already connected or once connected, resolve immediately
+      const onConnect = () => {
+        cleanup();
         resolve(s);
-      });
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        // Resolve anyway with socket so emit can be queued by Socket.IO buffer
+        resolve(s);
+      }, 4000);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        s.off('connect', onConnect);
+      };
+
+      s.once('connect', onConnect);
     });
   }
 
@@ -69,7 +80,7 @@ class SocketService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out. Please try again.'));
-      }, 8000);
+      }, 10000);
 
       s.emit('create_session', { receiverInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
         clearTimeout(timeout);
@@ -87,7 +98,7 @@ class SocketService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out. Check pairing code.'));
-      }, 8000);
+      }, 10000);
 
       s.emit('join_by_code', { code: code.replace(/\s+/g, ''), controllerInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
         clearTimeout(timeout);
@@ -105,7 +116,7 @@ class SocketService {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out. Check QR code.'));
-      }, 8000);
+      }, 10000);
 
       s.emit('join_by_id', { sessionId, controllerInfo }, (response: { success: boolean; session?: PairingSession; error?: string }) => {
         clearTimeout(timeout);
@@ -119,7 +130,7 @@ class SocketService {
   }
 
   public sendCommand(sessionId: string, command: Omit<RemoteCommand, 'timestamp'>) {
-    if (!this.socket || !this.socket.connected) {
+    if (!this.socket) {
       return;
     }
     const fullCommand: RemoteCommand = {
@@ -130,14 +141,14 @@ class SocketService {
   }
 
   public sendPlaybackState(sessionId: string, state: PlaybackState) {
-    if (!this.socket || !this.socket.connected) {
+    if (!this.socket) {
       return;
     }
     this.socket.emit('playback_state_update', { sessionId, state });
   }
 
   public leaveSession(sessionId: string, role: 'controller' | 'receiver') {
-    if (this.socket && this.socket.connected) {
+    if (this.socket) {
       this.socket.emit('leave_session', { sessionId, role });
     }
   }
