@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "CastSync - Cross-Device Browser & Media Remote",
+  "short_name": "CastSync",
+  "description": "Cross-device browser and media remote control system connecting phones, tablets, PCs, and Smart TVs via instant QR or 6-digit pairing.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "orientation": "any",
+  "categories": ["utilities", "entertainment", "media"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

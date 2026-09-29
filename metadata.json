@@ -1,0 +1,6 @@
+{
+  "name": "CastSync - Cross-Device Browser & Media Remote",
+  "description": "Cross-device browser and media remote control system connecting phones, tablets, PCs, and Smart TVs via instant QR or 6-digit pairing.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
