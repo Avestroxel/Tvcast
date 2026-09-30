@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { DeviceInfo, PairingSession, PlaybackState, RemoteCommand } from '../types';
+import { BrowserState, DeviceInfo, PairingSession, PlaybackState, RemoteCommand } from '../types';
 
 export class SocketService {
   constructor(private reportLifecycle = true) {}
@@ -171,6 +171,12 @@ export class SocketService {
       return;
     }
     this.socket.emit('playback_state_update', { sessionId, state });
+  }
+
+
+  public sendBrowserState(sessionId: string, state: BrowserState) {
+    if (!this.socket?.connected) return;
+    this.socket.emit('browser_state_update', { sessionId, state });
   }
 
   public leaveSession(sessionId: string, role: 'controller' | 'receiver') {

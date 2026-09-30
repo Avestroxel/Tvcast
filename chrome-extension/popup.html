@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      *{box-sizing:border-box}body{width:320px;margin:0;padding:20px;background:#0c0d11;color:#fff;font:14px system-ui,sans-serif}h1{display:flex;align-items:center;gap:9px;font-size:16px;margin:0 0 10px}.mark{display:grid;width:28px;height:28px;place-items:center;border-radius:10px;background:#6d5dfb22;color:#b5adff}p{color:#a1a1aa;line-height:1.55;margin:0}.site{overflow:hidden;margin:15px 0 0;padding:11px 12px;border:1px solid #ffffff12;border-radius:12px;background:#ffffff05;color:#d4d4d8;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,monospace}button{width:100%;margin-top:12px;padding:11px 13px;border:0;border-radius:12px;background:#fff;color:#09090b;font-weight:700;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.35}.ok{color:#6ee7b7}.warn{color:#fcd34d}small{display:block;margin-top:14px;color:#71717a;line-height:1.5}
+    </style>
+  </head>
+  <body>
+    <h1><span class="mark">C</span>CastSync Browser Bridge</h1>
+    <p id="status">Checking the current tab…</p>
+    <div id="site" class="site">—</div>
+    <button id="connect" type="button" disabled>Connect This CastSync</button>
+    <small>Only the CastSync site you approve can use the bridge. Browser access stays in this Chrome profile.</small>
+    <script src="popup.js"></script>
+  </body>
+</html>

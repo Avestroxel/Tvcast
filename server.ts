@@ -5,7 +5,6 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { browseWebsite } from './server/website-browser.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +31,8 @@ interface PairingSession {
   controllerToken: string | null;
   receiverDisconnectTimer?: NodeJS.Timeout;
   controllerDisconnectTimer?: NodeJS.Timeout;
-  browseRequests?: { start: number; count: number };
+  browserState?: Record<string, unknown>;
+  browserStateAt?: number;
 }
 
 const app = express();
@@ -43,6 +43,7 @@ const io = new SocketIOServer(server, {
     origin: '*',
     methods: ['GET', 'POST'],
   },
+  maxHttpBufferSize: 2_000_000,
   pingInterval: 10000,
   pingTimeout: 5000,
 });
@@ -117,29 +118,6 @@ app.get('/api/session/:id', (req: Request, res: Response) => {
   });
 });
 
-// Only the paired controller can browse public pages through this server.
-app.post('/api/browse', async (req: Request, res: Response) => {
-  const { sessionId, token, url } = req.body || {};
-  const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
-  if (!session || !session.controllerToken || token !== session.controllerToken) {
-    res.status(403).json({ error: 'Pair with a receiving device before browsing.' });
-    return;
-  }
-  if (typeof url !== 'string' || url.length > 4096) {
-    res.status(400).json({ error: 'Enter a valid website URL.' });
-    return;
-  }
-  const now = Date.now();
-  if (!session.browseRequests || now - session.browseRequests.start > 60000) session.browseRequests = { start: now, count: 0 };
-  if (session.browseRequests.count++ >= 30) {
-    res.status(429).json({ error: 'Please wait a minute before opening more pages.' });
-    return;
-  }
-  res.setHeader('Cache-Control', 'no-store');
-  try { res.json(await browseWebsite(url)); }
-  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : 'Unable to read this website.' }); }
-});
-
 // Socket.io logic
 io.on('connection', (socket: Socket) => {
   const clientIp = socket.handshake.address;
@@ -195,6 +173,7 @@ io.on('connection', (socket: Socket) => {
     }
     socket.join(sessionId);
     callback({ success: true });
+    if (!isReceiver && session.browserState) socket.emit('browser_state_updated', session.browserState);
     socket.to(sessionId).emit('peer_reconnected', { role });
   });
 
@@ -299,6 +278,7 @@ io.on('connection', (socket: Socket) => {
         status: 'connected',
       },
     });
+    if (session.browserState) socket.emit('browser_state_updated', session.browserState);
   });
 
   // Controller joins by sessionId (from QR code scan)
@@ -340,6 +320,7 @@ io.on('connection', (socket: Socket) => {
         status: 'connected',
       },
     });
+    if (session.browserState) socket.emit('browser_state_updated', session.browserState);
   });
 
   // Relay command from controller to receiver
@@ -352,12 +333,16 @@ io.on('connection', (socket: Socket) => {
     const actions = new Set(['OPEN_URL', 'PLAY', 'PAUSE', 'TOGGLE_PLAYBACK', 'SEEK',
       'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME', 'VOLUME_UP', 'VOLUME_DOWN',
       'MUTE', 'UNMUTE', 'FULLSCREEN', 'EXIT_FULLSCREEN', 'BACK', 'FORWARD',
-      'REFRESH', 'HOME', 'NAVIGATE', 'DISCONNECT']);
+      'REFRESH', 'HOME', 'NAVIGATE', 'POINTER', 'TYPE_TEXT', 'NEW_TAB', 'CLOSE_TAB', 'DISCONNECT']);
     if (!command || command.type !== 'command' || !actions.has(command.action)) return;
     if (['SEEK', 'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME'].includes(command.action) &&
         (typeof command.value !== 'number' || !Number.isFinite(command.value) || command.value < 0 ||
          (command.action === 'SET_VOLUME' && command.value > 1))) return;
     if (command.action === 'NAVIGATE' && !['up', 'down', 'left', 'right', 'ok', 'back', 'home', 'menu', 'enter', 'escape'].includes(command.direction)) return;
+    if (command.action === 'POINTER' && (!command.value || typeof command.value !== 'object' ||
+        typeof command.value.x !== 'number' || typeof command.value.y !== 'number' ||
+        command.value.x < 0 || command.value.x > 1 || command.value.y < 0 || command.value.y > 1)) return;
+    if (command.action === 'TYPE_TEXT' && (typeof command.value !== 'string' || command.value.length > 1000)) return;
 
     // If opening a URL, validate against dangerous schemes
     if (command.action === 'OPEN_URL') {
@@ -371,6 +356,41 @@ io.on('connection', (socket: Socket) => {
 
     // Forward to receiver
     io.to(session.receiverSocketId).emit('execute_command', command);
+  });
+
+  // Relay the desktop browser bridge preview and navigation state.
+  socket.on('browser_state_update', ({ sessionId, state }) => {
+    const session = sessions.get(sessionId);
+    if (!session || session.receiverSocketId !== socket.id || !state || typeof state !== 'object') return;
+    const now = Date.now();
+    if (session.browserStateAt && now - session.browserStateAt < 120) return;
+    const url = typeof state.url === 'string' && state.url.length <= 4096 && (!state.url || isSafeUrl(state.url)) ? state.url : '';
+    const screenshot = typeof state.screenshot === 'string' && state.screenshot.length <= 1_500_000 &&
+      /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(state.screenshot) ? state.screenshot : undefined;
+    const media = state.media && typeof state.media === 'object' ? {
+      playing: !!state.media.playing,
+      currentTime: Number.isFinite(state.media.currentTime) ? Math.max(0, state.media.currentTime) : 0,
+      duration: Number.isFinite(state.media.duration) ? Math.max(0, state.media.duration) : 0,
+      volume: Number.isFinite(state.media.volume) ? Math.min(1, Math.max(0, state.media.volume)) : 1,
+      muted: !!state.media.muted,
+    } : null;
+    const clean = {
+      connected: !!state.connected,
+      extensionVersion: typeof state.extensionVersion === 'string' ? state.extensionVersion.slice(0, 24) : undefined,
+      url,
+      title: typeof state.title === 'string' ? state.title.slice(0, 300) : '',
+      screenshot,
+      loading: !!state.loading,
+      fullscreen: !!state.fullscreen,
+      canGoBack: typeof state.canGoBack === 'boolean' ? state.canGoBack : undefined,
+      canGoForward: typeof state.canGoForward === 'boolean' ? state.canGoForward : undefined,
+      media,
+      error: typeof state.error === 'string' ? state.error.slice(0, 500) : null,
+      timestamp: now,
+    };
+    session.browserStateAt = now;
+    session.browserState = clean;
+    if (session.controllerSocketId) io.to(session.controllerSocketId).emit('browser_state_updated', clean);
   });
 
   // Relay playback state updates from receiver to controller

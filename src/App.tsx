@@ -8,20 +8,19 @@ import { Header } from './components/common/Header';
 import { ModeSelection } from './components/home/ModeSelection';
 import { ReceiverPairing } from './components/receiver/ReceiverPairing';
 import { ReceiverConnected } from './components/receiver/ReceiverConnected';
-import { ReceiverPlayer } from './components/receiver/ReceiverPlayer';
+import { BrowserReceiver } from './components/receiver/BrowserReceiver';
 import { ControllerPairing } from './components/controller/ControllerPairing';
 import { RemoteController } from './components/controller/RemoteController';
-import { SplitSimulator } from './components/simulator/SplitSimulator';
 import { detectDevice } from './lib/device';
 import { socketService } from './lib/socket';
 import { getStoredLanguage, setStoredLanguage, Language, translations } from './lib/i18n';
 import {
   DeviceInfo,
   PairingSession,
-  PlaybackState,
   ConnectionStatus,
   RemoteAction,
   NavDirection,
+  BrowserState,
 } from './types';
 
 export default function App() {
@@ -35,23 +34,13 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isPairing, setIsPairing] = useState<boolean>(false);
   const [pairingError, setPairingError] = useState<string | null>(null);
-  const [showSplitSimulator, setShowSplitSimulator] = useState<boolean>(false);
 
   const initialJoinAttempted = useRef<boolean>(false);
 
   // Playback state on controller
-  const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    playing: false,
-    currentTime: 0,
-    duration: 0,
-    volume: 0.8,
-    muted: false,
-    fullscreen: false,
-    currentUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    mediaTitle: 'Big Buck Bunny (1080p Sample)',
-    contentType: 'video',
-    supportsRemoteMedia: true,
-    lastUpdated: Date.now(),
+  const [browserState, setBrowserState] = useState<BrowserState>({
+    connected: false, url: '', title: '', loading: false, fullscreen: false,
+    media: null, timestamp: 0,
   });
 
   const toggleLanguage = () => {
@@ -131,8 +120,8 @@ export default function App() {
     };
 
     // State update received on Controller from Controlled Device
-    const handlePlaybackStateUpdated = (newState: PlaybackState) => {
-      setPlaybackState(newState);
+    const handleBrowserStateUpdated = (newState: BrowserState) => {
+      setBrowserState(newState);
     };
 
     const handleSessionExpired = () => {
@@ -163,7 +152,7 @@ export default function App() {
     socket.on('disconnect', handleDisconnect);
     socket.on('controller_connected', handleControllerConnected);
     socket.on('peer_disconnected', handlePeerDisconnected);
-    socket.on('playback_state_updated', handlePlaybackStateUpdated);
+    socket.on('browser_state_updated', handleBrowserStateUpdated);
     socket.on('session_expired', handleSessionExpired);
 
     return () => {
@@ -178,7 +167,7 @@ export default function App() {
       socket.off('disconnect', handleDisconnect);
       socket.off('controller_connected', handleControllerConnected);
       socket.off('peer_disconnected', handlePeerDisconnected);
-      socket.off('playback_state_updated', handlePlaybackStateUpdated);
+      socket.off('browser_state_updated', handleBrowserStateUpdated);
       socket.off('session_expired', handleSessionExpired);
     };
   }, [session, lang, peerDevice]);
@@ -277,7 +266,6 @@ export default function App() {
         lang={lang}
         onToggleLang={toggleLanguage}
         onExit={handleExit}
-        onOpenSplitDemo={() => setShowSplitSimulator(true)}
       />}
 
       {pairingError && mode === 'receiver' && (
@@ -296,7 +284,6 @@ export default function App() {
                 setMode('controller');
               }
             }}
-            onOpenSplitDemo={() => setShowSplitSimulator(true)}
           />
         )}
 
@@ -321,11 +308,10 @@ export default function App() {
             )}
 
             {receiverStep === 'player' && session && (
-              <ReceiverPlayer
+              <BrowserReceiver
                 sessionId={session.sessionId}
                 controllerDevice={peerDevice}
                 lang={lang}
-                onDisconnect={handleExit}
               />
             )}
           </>
@@ -347,7 +333,7 @@ export default function App() {
               <RemoteController
                 sessionId={session.sessionId}
                 controlledDevice={peerDevice}
-                playbackState={playbackState}
+                browserState={browserState}
                 connectionStatus={connectionStatus}
                 lang={lang}
                 onSendCommand={handleSendCommand}
@@ -358,10 +344,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Split-Screen Simulator Modal for local testing */}
-      {showSplitSimulator && (
-        <SplitSimulator onClose={() => setShowSplitSimulator(false)} />
-      )}
     </div>
   );
 }

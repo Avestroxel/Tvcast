@@ -13,7 +13,6 @@ interface HeaderProps {
   lang?: Language;
   onToggleLang?: () => void;
   onExit?: () => void;
-  onOpenSplitDemo?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,7 +23,6 @@ export const Header: React.FC<HeaderProps> = ({
   lang = 'en',
   onToggleLang,
   onExit,
-  onOpenSplitDemo,
 }) => {
   const t = translations[lang] || translations.en;
 

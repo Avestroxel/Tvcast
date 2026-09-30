@@ -51,6 +51,10 @@ export type RemoteAction =
   | 'REFRESH'
   | 'HOME'
   | 'NAVIGATE'
+  | 'POINTER'
+  | 'TYPE_TEXT'
+  | 'NEW_TAB'
+  | 'CLOSE_TAB'
   | 'DISCONNECT';
 
 export type NavDirection = 'up' | 'down' | 'left' | 'right' | 'ok' | 'back' | 'home' | 'menu' | 'enter' | 'escape';
@@ -58,7 +62,7 @@ export type NavDirection = 'up' | 'down' | 'left' | 'right' | 'ok' | 'back' | 'h
 export interface RemoteCommand {
   type: 'command';
   action: RemoteAction;
-  value?: number | string | boolean;
+  value?: number | string | boolean | { x: number; y: number };
   url?: string;
   direction?: NavDirection;
   timestamp: number;
@@ -72,4 +76,25 @@ export interface PairingSession {
   receiver: DeviceInfo;
   controller: DeviceInfo | null;
   status: 'waiting' | 'connected' | 'expired';
+}
+
+export interface BrowserState {
+  connected: boolean;
+  extensionVersion?: string;
+  url: string;
+  title: string;
+  screenshot?: string;
+  loading: boolean;
+  fullscreen: boolean;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  media?: {
+    playing: boolean;
+    currentTime: number;
+    duration: number;
+    volume: number;
+    muted: boolean;
+  } | null;
+  error?: string | null;
+  timestamp: number;
 }

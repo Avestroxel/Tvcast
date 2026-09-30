@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "CastSync Browser Bridge",
+  "version": "0.3.0",
+  "description": "Control a real Chrome tab from your paired CastSync phone remote.",
+  "permissions": ["tabs", "scripting", "storage", "webNavigation"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "service-worker.js" },
+  "action": { "default_title": "CastSync Browser Bridge", "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

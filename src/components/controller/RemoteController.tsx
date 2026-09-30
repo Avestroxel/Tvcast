@@ -1,448 +1,141 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Play,
-  Pause,
-  RotateCcw,
-  RotateCw,
-  Volume2,
-  VolumeX,
-  Volume1,
-  Maximize2,
-  Minimize2,
-  ArrowLeft,
-  ArrowRight,
-  RotateCw as ReloadIcon,
-  Home,
-  Tv,
-  Globe,
-  Compass,
-  Sliders,
-  ChevronDown,
-  ChevronUp,
-  Search,
+  ArrowLeft, ArrowRight, Chrome, CornerDownLeft, ExternalLink, Home, Keyboard,
+  Loader2, Maximize2, Minimize2, MousePointer2, Pause, Play, Plus, RefreshCw,
+  Search, Send, Tv, Volume2, VolumeX, X,
 } from 'lucide-react';
-import { DeviceInfo, PlaybackState, RemoteAction, NavDirection, ConnectionStatus } from '../../types';
-import { WebsiteBrowser } from './WebsiteBrowser';
-import { socketService, type SocketService } from '../../lib/socket';
+import type { BrowserState, ConnectionStatus, DeviceInfo, NavDirection, RemoteAction } from '../../types';
+import type { Language } from '../../lib/i18n';
+import type { SocketService } from '../../lib/socket';
 import { DPadRemote } from './DPadRemote';
-import { MediaPresets } from './MediaPresets';
-import { Language, translations } from '../../lib/i18n';
 
 interface RemoteControllerProps {
   sessionId: string;
   controlledDevice: DeviceInfo | null;
-  playbackState: PlaybackState;
+  browserState?: BrowserState;
   connectionStatus?: ConnectionStatus;
   onSendCommand: (action: RemoteAction, value?: any, url?: string, direction?: NavDirection) => void;
   onDisconnect: () => void;
   lang?: Language;
   service?: SocketService;
 }
+const emptyBrowser: BrowserState = { connected: false, url: '', title: '', loading: false, fullscreen: false, media: null, timestamp: 0 };
+
+function destination(value: string) {
+  const clean = value.trim();
+  if (!clean) return null;
+  if (/^https?:\/\//i.test(clean)) {
+    try { return new URL(clean).href; } catch { return null; }
+  }
+  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3})(:\d+)?(?:\/|$)/i.test(clean)) return `http://${clean}`;
+  if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:\/\S*)?$/i.test(clean)) return `https://${clean}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(clean)}`;
+}
+function formatTime(value: number) {
+  if (!Number.isFinite(value) || value < 0) return '00:00';
+  const hours = Math.floor(value / 3600); const minutes = Math.floor((value % 3600) / 60); const seconds = Math.floor(value % 60);
+  return `${hours ? `${hours}:` : ''}${String(minutes).padStart(hours ? 2 : 1, '0')}:${String(seconds).padStart(2, '0')}`;
+}
 
 export const RemoteController: React.FC<RemoteControllerProps> = ({
-  sessionId,
-  controlledDevice,
-  playbackState,
-  onSendCommand,
-  onDisconnect,
-  lang = 'en',
-  service = socketService,
-  connectionStatus = 'connected',
+  controlledDevice, browserState = emptyBrowser, connectionStatus = 'connected', onSendCommand, onDisconnect, lang = 'en',
 }) => {
-  const t = translations[lang] || translations.en;
-  const [localSeekTime, setLocalSeekTime] = useState<number | null>(null);
-  const [localVolume, setLocalVolume] = useState<number | null>(null);
-  const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
-  const [optimisticMuted, setOptimisticMuted] = useState<boolean | null>(null);
-  const [workspaceTab, setWorkspaceTab] = useState<'browse' | 'remote'>('browse');
-  const [activeTab, setActiveTab] = useState<'media' | 'dpad'>('media');
-  const [showPresets, setShowPresets] = useState<boolean>(false);
-
-  // Clear optimistic states when server state updates
-  useEffect(() => {
-    setOptimisticPlaying(null);
-  }, [playbackState.playing]);
+  const ku = lang === 'ku';
+  const [omnibox, setOmnibox] = useState('');
+  const [typing, setTyping] = useState('');
+  const [showKeyboard, setShowKeyboard] = useState(false);
+  const [showDpad, setShowDpad] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
+  const omniboxFocused = useRef(false);
+  const media = browserState.media;
+  const offline = connectionStatus !== 'connected';
 
   useEffect(() => {
-    setOptimisticMuted(null);
-  }, [playbackState.muted]);
+    if (!omniboxFocused.current && browserState.url) setOmnibox(browserState.url);
+  }, [browserState.url]);
+  useEffect(() => { setImageReady(false); }, [browserState.screenshot]);
 
-  const currentPlaying = optimisticPlaying !== null ? optimisticPlaying : playbackState.playing;
-  const currentMuted = optimisticMuted !== null ? optimisticMuted : playbackState.muted;
-  const displayTime = localSeekTime !== null ? localSeekTime : playbackState.currentTime;
-  const displayVolume = localVolume !== null ? localVolume : playbackState.volume;
+  const host = useMemo(() => {
+    try { return new URL(browserState.url).hostname; } catch { return ''; }
+  }, [browserState.url]);
 
-  const handleSelectPreset = (url: string) => {
+  const open = (value: string) => {
+    const url = destination(value);
+    if (!url || offline) return;
     onSendCommand('OPEN_URL', undefined, url);
-    setShowPresets(false);
+    setOmnibox(url);
+  };
+  const clickPreview = (event: React.MouseEvent<HTMLImageElement>) => {
+    const image = event.currentTarget;
+    if (!image.naturalWidth || !image.naturalHeight || offline) return;
+    const rect = image.getBoundingClientRect();
+    const imageRatio = image.naturalWidth / image.naturalHeight;
+    const boxRatio = rect.width / rect.height;
+    const shownWidth = boxRatio > imageRatio ? rect.height * imageRatio : rect.width;
+    const shownHeight = boxRatio > imageRatio ? rect.height : rect.width / imageRatio;
+    const left = rect.left + (rect.width - shownWidth) / 2;
+    const top = rect.top + (rect.height - shownHeight) / 2;
+    const x = (event.clientX - left) / shownWidth; const y = (event.clientY - top) / shownHeight;
+    if (x >= 0 && x <= 1 && y >= 0 && y <= 1) onSendCommand('POINTER', { x, y });
+  };
+  const sendText = () => {
+    if (!typing || offline) return;
+    onSendCommand('TYPE_TEXT', typing); setTyping('');
   };
 
-  const handleTogglePlayback = () => {
-    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
-    setOptimisticPlaying(!currentPlaying);
-    onSendCommand('TOGGLE_PLAYBACK');
-  };
+  return <main className="min-h-[calc(100dvh-65px)] bg-[#090a0e] px-3 py-4 text-white sm:px-6 sm:py-7">
+    <div className="mx-auto w-full max-w-3xl space-y-4">
+      <section className="overflow-hidden rounded-[1.7rem] border border-white/[0.07] bg-[#111218] shadow-2xl shadow-black/10">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5 sm:px-5">
+          <div className="flex min-w-0 items-center gap-3"><span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#6d5dfb]/12 text-[#b5adff]"><Chrome size={20} />{browserState.connected && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#111218] bg-emerald-400" />}</span><div className="min-w-0"><p className="truncate text-sm font-semibold">{controlledDevice?.name || (ku ? 'لاپتۆپ' : 'Computer')}</p><p className={`mt-0.5 text-[11px] ${browserState.connected ? 'text-emerald-400' : 'text-amber-300'}`}>{browserState.connected ? (ku ? 'Chrome ئامادەیە' : 'Chrome bridge ready') : (ku ? 'Extension پەیوەست نییە' : 'Extension not connected')}</p></div></div>
+          <button onClick={onDisconnect} aria-label={ku ? 'پەیوەندی ببڕە' : 'Disconnect'} className="grid h-9 w-9 place-items-center rounded-xl text-zinc-500 hover:bg-white/5 hover:text-white"><X size={17} /></button>
+        </div>
 
-  const handleToggleMute = () => {
-    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
-    const nextMuted = !currentMuted;
-    setOptimisticMuted(nextMuted);
-    onSendCommand(nextMuted ? 'MUTE' : 'UNMUTE');
-  };
-
-  const handleSeekOffset = (seconds: number) => {
-    if (!playbackState.supportsRemoteMedia || connectionStatus !== 'connected') return;
-    const target = Math.max(0, Math.min(playbackState.duration || 600, displayTime + seconds));
-    setLocalSeekTime(target);
-    onSendCommand(seconds > 0 ? 'SEEK_FORWARD' : 'SEEK_BACKWARD', Math.abs(seconds));
-    setTimeout(() => setLocalSeekTime(null), 800);
-  };
-
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '00:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  return (
-    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between remote-workspace w-full max-w-3xl mx-auto p-4 sm:p-6 pb-8 space-y-4 select-none">
-      {/* Top Remote Header */}
-      <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 sm:p-5 shadow-xl flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-[#6D5DFB]/15 border border-[#6D5DFB]/30 flex items-center justify-center text-[#6D5DFB]">
-            <Tv className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-wider text-zinc-400 font-bold">
-              {t.connectedScreen}
-            </div>
-            <div className="text-base font-bold text-white truncate max-w-[200px]">
-              {controlledDevice?.name || 'Living Room TV'}
-            </div>
+        <div className="border-b border-white/[0.06] p-3 sm:p-4">
+          <form onSubmit={(event) => { event.preventDefault(); open(omnibox); }} className="flex items-center gap-2 rounded-2xl border border-white/[0.09] bg-[#090a0e] p-1.5 focus-within:border-[#6d5dfb]/60">
+            {browserState.loading ? <Loader2 size={17} className="ms-2 shrink-0 animate-spin text-[#b5adff]" /> : <Search size={17} className="ms-2 shrink-0 text-zinc-600" />}
+            <input value={omnibox} onChange={(event) => setOmnibox(event.target.value)} onFocus={() => { omniboxFocused.current = true; }} onBlur={() => { omniboxFocused.current = false; }} dir="ltr" autoCapitalize="none" autoCorrect="off" enterKeyHint="go" placeholder={ku ? 'لە Google بگەڕێ یان ناونیشان بنووسە…' : 'Search Google or type an address…'} aria-label={ku ? 'گەڕان لە Google' : 'Google search or address'} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-zinc-200 outline-none placeholder:text-zinc-600" />
+            <button disabled={!omnibox.trim() || offline} aria-label={ku ? 'بگەڕێ' : 'Go'} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#6d5dfb] text-white disabled:opacity-30"><ArrowRight size={18} /></button>
+          </form>
+          <div className="mt-3 flex items-center gap-1.5">
+            <button disabled={offline} onClick={() => onSendCommand('BACK')} className="browser-icon" aria-label="Back"><ArrowLeft size={17} /></button>
+            <button disabled={offline} onClick={() => onSendCommand('FORWARD')} className="browser-icon" aria-label="Forward"><ArrowRight size={17} /></button>
+            <button disabled={offline} onClick={() => onSendCommand('REFRESH')} className="browser-icon" aria-label="Reload"><RefreshCw size={16} /></button>
+            <button disabled={offline} onClick={() => onSendCommand('HOME')} className="browser-icon" aria-label="Google home"><Home size={16} /></button>
+            <span className="flex-1" />
+            <button disabled={offline} onClick={() => onSendCommand('NEW_TAB')} className="browser-icon" aria-label="New tab"><Plus size={17} /></button>
+            <button disabled={offline || !browserState.url} onClick={() => onSendCommand(browserState.fullscreen ? 'EXIT_FULLSCREEN' : 'FULLSCREEN')} className={`browser-icon ${browserState.fullscreen ? '!bg-[#6d5dfb]/15 !text-[#b5adff]' : ''}`} aria-label="Fullscreen">{browserState.fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-semibold text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{connectionStatus === 'connected' ? t.online : 'Reconnecting…'}</span>
-          </div>
-        </div>
-      </div>
-
-      {(!playbackState.supportsRemoteMedia || playbackState.error) && (
-        <p role="status" className="text-sm text-amber-300 text-center">
-          {playbackState.error || (lang === 'ku' ? 'پڵەیەری وێبسایت: کۆنترۆڵەکانی خودی پڵەیەر لە TV بەکار بێنە، یان سەرچاوەی ڤیدیۆیەک هەڵبژێرە.' : 'Website player: use its controls on the TV, or choose a video source for phone playback controls.')}
-        </p>
-      )}
-      <nav aria-label={lang === 'ku' ? 'بەشەکان' : 'Workspace'} className="grid grid-cols-2 gap-1 rounded-2xl border border-white/[0.06] bg-[#111218] p-1.5">
-        <button aria-pressed={workspaceTab === 'browse'} onClick={() => setWorkspaceTab('browse')} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-medium ${workspaceTab === 'browse' ? 'bg-white/[0.08] text-white' : 'text-zinc-500'}`}><Globe size={17} />{lang === 'ku' ? 'گەڕان' : 'Browser'}</button>
-        <button aria-pressed={workspaceTab === 'remote'} onClick={() => setWorkspaceTab('remote')} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-medium ${workspaceTab === 'remote' ? 'bg-white/[0.08] text-white' : 'text-zinc-500'}`}><Sliders size={17} />{lang === 'ku' ? 'کۆنترۆڵ' : 'Remote'}</button>
-      </nav>
-      <div hidden={workspaceTab !== 'browse'}>
-        <WebsiteBrowser lang={lang} service={service} disabled={connectionStatus !== 'connected'} onCast={(url, kind) => { onSendCommand('OPEN_URL', kind, url); setWorkspaceTab('remote'); }} />
-      </div>
-      <section hidden={workspaceTab !== 'remote'} className="space-y-4">
-
-      <div className="rounded-2xl border border-white/10 bg-[#111114] p-4">
-        {/* Quick presets toggle */}
-        <div className="flex items-center justify-between pt-1">
-          <button
-            type="button"
-            onClick={() => setShowPresets(!showPresets)}
-            className="flex items-center gap-1.5 text-xs text-[#A594FD] hover:text-white transition font-medium cursor-pointer"
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span>{showPresets ? t.hideDemos : t.chooseSample}</span>
-            {showPresets ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-
-          {playbackState.mediaTitle && (
-            <span className="text-[11px] text-zinc-400 truncate max-w-[180px]">
-              {playbackState.mediaTitle}
-            </span>
-          )}
+        <div className="relative aspect-[16/10] min-h-[230px] overflow-hidden bg-black sm:min-h-[360px]">
+          {browserState.screenshot ? <>
+            {!imageReady && <div className="absolute inset-0 grid place-items-center"><Loader2 size={22} className="animate-spin text-zinc-600" /></div>}
+            <img src={browserState.screenshot} onLoad={() => setImageReady(true)} onClick={clickPreview} alt={ku ? 'پێشبینینی بڕۆسەری لاپتۆپ' : 'Live computer browser preview'} draggable={false} className={`h-full w-full cursor-crosshair object-contain transition-opacity ${imageReady ? 'opacity-100' : 'opacity-0'}`} />
+            <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-[10px] text-zinc-300 backdrop-blur"><MousePointer2 size={12} />{ku ? 'بۆ کلیککردن دەست لە وێنەکە بدە' : 'Tap the preview to click'}</div>
+          </> : <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center"><span className="mb-4 grid h-16 w-16 place-items-center rounded-3xl border border-white/[0.07] bg-white/[0.03] text-zinc-500"><Tv size={27} /></span><h2 className="text-lg font-semibold">{browserState.connected ? (ku ? 'لە Google بگەڕێ' : 'Start with a Google search') : (ku ? 'پەیوەستکەری Chrome لە لاپتۆپ چالاک بکە' : 'Enable Browser Bridge on the computer')}</h2><p className="mt-2 max-w-sm text-sm leading-6 text-zinc-600">{browserState.error || (browserState.connected ? (ku ? 'ئەنجامەکان لە Chrome ـی لاپتۆپ دەکرێنەوە و لێرە پێشبینییان دەبینیت.' : 'Results open in the computer’s real Chrome tab and appear here as a remote preview.') : (ku ? 'لە لاپتۆپ chrome-extension دابمەزرێنە، پاشان پەڕەکە refresh بکەرەوە.' : 'Install the chrome-extension folder on the computer, then refresh the receiver page.'))}</p></div>}
         </div>
 
-        {/* Collapsible Presets Drawer */}
-        {showPresets && (
-          <div className="pt-2 border-t border-white/[0.08]">
-            <MediaPresets onSelectUrl={handleSelectPreset} />
-          </div>
-        )}
-      </div>
-
-      {/* Mode Segmented Controls: Media Controls vs TV D-Pad */}
-      <div className="grid grid-cols-2 p-1 rounded-2xl bg-[#141418] border border-white/10">
-        <button
-          onClick={() => setActiveTab('media')}
-          className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer ${
-            activeTab === 'media'
-              ? 'bg-[#6D5DFB] text-white shadow-md'
-              : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <Play className="w-4 h-4" />
-          <span>{t.mediaControls}</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('dpad')}
-          className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer ${
-            activeTab === 'dpad'
-              ? 'bg-[#6D5DFB] text-white shadow-md'
-              : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <Sliders className="w-4 h-4" />
-          <span>{t.dpadRemote}</span>
-        </button>
-      </div>
-
-      {/* Main Control Panel */}
-      {activeTab === 'media' ? (
-        <div className="bg-[#111114] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
-          {/* Timeline & Progress Bar */}
-          <div className="space-y-2" dir="ltr">
-            <div className="flex justify-between text-xs font-mono text-zinc-400">
-              <span className="text-white font-semibold">{formatTime(displayTime)}</span>
-              <span>{formatTime(playbackState.duration)}</span>
-            </div>
-
-            <input
-              type="range"
-              min={0}
-              max={playbackState.duration || 100}
-              step={1}
-              value={displayTime}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                setLocalSeekTime(val);
-              }}
-              onMouseUp={() => {
-                if (localSeekTime !== null) {
-                  onSendCommand('SEEK', localSeekTime);
-                  setTimeout(() => setLocalSeekTime(null), 500);
-                }
-              }}
-              onTouchEnd={() => {
-                if (localSeekTime !== null) {
-                  onSendCommand('SEEK', localSeekTime);
-                  setTimeout(() => setLocalSeekTime(null), 500);
-                }
-              }}
-              className="w-full accent-[#6D5DFB] cursor-pointer"
-            />
-          </div>
-
-          {/* Primary Playback Controls with 0ms Optimistic Feedback */}
-          <div className="flex items-center justify-center gap-6 sm:gap-8 py-2">
-            {/* Seek Back 10s */}
-            <button
-              onClick={() => handleSeekOffset(-10)}
-              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-90 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
-              title="Rewind 10 Seconds"
-            >
-              <RotateCcw className="w-6 h-6" />
-              <span className="absolute bottom-1 right-2 text-[9px] font-bold text-zinc-400">10</span>
-            </button>
-
-            {/* Big Play / Pause Toggle with instantaneous state switch */}
-            <button
-              onClick={handleTogglePlayback}
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[#6D5DFB] hover:bg-[#5B4BE3] active:scale-90 text-white flex items-center justify-center transition shadow-lg shadow-black/20 cursor-pointer focus:outline-none"
-              title={currentPlaying ? 'Pause' : 'Play'}
-            >
-              {currentPlaying ? (
-                <Pause className="w-10 h-10 fill-white" />
-              ) : (
-                <Play className="w-10 h-10 fill-white translate-x-1" />
-              )}
-            </button>
-
-            {/* Seek Forward 10s */}
-            <button
-              onClick={() => handleSeekOffset(10)}
-              className="relative p-4 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-90 border border-white/10 text-zinc-300 hover:text-white transition cursor-pointer shadow-md"
-              title="Fast Forward 10 Seconds"
-            >
-              <RotateCw className="w-6 h-6" />
-              <span className="absolute bottom-1 right-2 text-[9px] font-bold text-zinc-400">10</span>
-            </button>
-          </div>
-
-          {/* Volume Control Bar */}
-          <div className="p-4 rounded-2xl bg-[#18181D] border border-white/10 space-y-3">
-            <div className="flex items-center justify-between text-xs text-zinc-400">
-              <span className="font-semibold uppercase tracking-wider">{t.deviceVolume}</span>
-              <span className="font-mono text-white">
-                {currentMuted ? t.muted : `${Math.round(displayVolume * 100)}%`}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3" dir="ltr">
-              <button
-                onClick={handleToggleMute}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 active:scale-90 text-zinc-300 hover:text-white transition cursor-pointer"
-                title={currentMuted ? t.unmute : t.muteAudio}
-              >
-                {currentMuted || displayVolume === 0 ? (
-                  <VolumeX className="w-5 h-5 text-red-400" />
-                ) : displayVolume < 0.5 ? (
-                  <Volume1 className="w-5 h-5" />
-                ) : (
-                  <Volume2 className="w-5 h-5" />
-                )}
-              </button>
-
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={currentMuted ? 0 : displayVolume}
-                onChange={(e) => {
-                  const vol = parseFloat(e.target.value);
-                  setLocalVolume(vol);
-                  setOptimisticMuted(false);
-                  onSendCommand('SET_VOLUME', vol);
-                }}
-                onMouseUp={() => setLocalVolume(null)}
-                onTouchEnd={() => setLocalVolume(null)}
-                className="flex-1 accent-[#6D5DFB] cursor-pointer"
-              />
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    const nextVol = Math.max(0, displayVolume - 0.1);
-                    setLocalVolume(nextVol);
-                    onSendCommand('VOLUME_DOWN');
-                    setTimeout(() => setLocalVolume(null), 400);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-90 text-xs font-bold text-white transition cursor-pointer"
-                  title="Volume Down"
-                >
-                  -
-                </button>
-                <button
-                  onClick={() => {
-                    const nextVol = Math.min(1, displayVolume + 0.1);
-                    setLocalVolume(nextVol);
-                    onSendCommand('VOLUME_UP');
-                    setTimeout(() => setLocalVolume(null), 400);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-90 text-xs font-bold text-white transition cursor-pointer"
-                  title="Volume Up"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Action Buttons: Fullscreen & Mute */}
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() =>
-                onSendCommand(playbackState.fullscreen ? 'EXIT_FULLSCREEN' : 'FULLSCREEN')
-              }
-              className={`flex items-center justify-center gap-2 py-3 rounded-2xl border font-semibold text-xs sm:text-sm transition cursor-pointer active:scale-95 ${
-                playbackState.fullscreen
-                  ? 'bg-[#6D5DFB]/20 border-[#6D5DFB] text-white'
-                  : 'bg-[#18181D] hover:bg-[#202027] border-white/10 text-white'
-              }`}
-            >
-              {playbackState.fullscreen ? (
-                <>
-                  <Minimize2 className="w-4 h-4 text-[#A594FD]" />
-                  <span>{t.exitFullscreen}</span>
-                </>
-              ) : (
-                <>
-                  <Maximize2 className="w-4 h-4 text-[#6D5DFB]" />
-                  <span>{t.fullscreen}</span>
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={handleToggleMute}
-              className={`flex items-center justify-center gap-2 py-3 rounded-2xl border font-semibold text-xs sm:text-sm transition cursor-pointer active:scale-95 ${
-                currentMuted
-                  ? 'bg-red-500/15 border-red-500/40 text-red-300'
-                  : 'bg-[#18181D] hover:bg-[#202027] border-white/10 text-white'
-              }`}
-            >
-              {currentMuted ? (
-                <>
-                  <VolumeX className="w-4 h-4 text-red-400" />
-                  <span>{t.unmute}</span>
-                </>
-              ) : (
-                <>
-                  <Volume2 className="w-4 h-4 text-zinc-400" />
-                  <span>{t.muteAudio}</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      ) : (
-        /* TV Navigation Mode (D-Pad) */
-        <div className="bg-[#111114] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center">
-          <DPadRemote onNavigate={(dir) => onSendCommand('NAVIGATE', undefined, undefined, dir)} />
-        </div>
-      )}
-
-      {/* Browser Controls Section */}
-      <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 shadow-xl">
-        <div className="text-[11px] uppercase tracking-wider text-zinc-400 font-bold mb-3 px-1">
-          {t.browserControls}
-        </div>
-        <div className="grid grid-cols-4 gap-2">
-          <button
-            disabled={connectionStatus !== 'connected'}
-            onClick={() => onSendCommand('BACK')}
-            className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
-            title="Back"
-          >
-            <ArrowLeft className="w-4 h-4 mb-1" />
-            <span className="text-[10px]">{t.back}</span>
-          </button>
-
-          <button
-            disabled={connectionStatus !== 'connected'}
-            onClick={() => onSendCommand('FORWARD')}
-            className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
-            title="Forward"
-          >
-            <ArrowRight className="w-4 h-4 mb-1" />
-            <span className="text-[10px]">{t.forward}</span>
-          </button>
-
-          <button
-            disabled={connectionStatus !== 'connected'}
-            onClick={() => onSendCommand('REFRESH')}
-            className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-zinc-300 hover:text-white transition cursor-pointer"
-            title="Refresh"
-          >
-            <ReloadIcon className="w-4 h-4 mb-1" />
-            <span className="text-[10px]">{t.reload}</span>
-          </button>
-
-          <button
-            disabled={connectionStatus !== 'connected'}
-            onClick={() => onSendCommand('HOME')}
-            className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#18181D] hover:bg-[#202027] active:scale-95 border border-white/5 text-[#A594FD] hover:text-white transition cursor-pointer"
-            title="Home"
-          >
-            <Home className="w-4 h-4 mb-1" />
-            <span className="text-[10px]">{t.home}</span>
-          </button>
-        </div>
-      </div>
+        {(browserState.title || browserState.url) && <div className="flex items-center gap-3 border-t border-white/[0.06] px-4 py-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{browserState.title || host}</p><p className="mt-0.5 truncate text-[11px] text-zinc-600" dir="ltr">{browserState.url}</p></div>{browserState.url && <button onClick={() => setOmnibox(browserState.url)} aria-label="Copy current address to search bar" className="grid h-9 w-9 place-items-center rounded-xl text-zinc-500 hover:bg-white/5"><ExternalLink size={15} /></button>}</div>}
       </section>
+
+      <section className="grid grid-cols-2 gap-2 rounded-2xl border border-white/[0.06] bg-[#111218] p-2">
+        <button onClick={() => { setShowDpad(false); setShowKeyboard(!showKeyboard); }} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm ${showKeyboard ? 'bg-white/[0.08] text-white' : 'text-zinc-500 hover:text-white'}`}><Keyboard size={17} />{ku ? 'نووسین لە پەڕە' : 'Type on page'}</button>
+        <button onClick={() => { setShowKeyboard(false); setShowDpad(!showDpad); }} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm ${showDpad ? 'bg-white/[0.08] text-white' : 'text-zinc-500 hover:text-white'}`}><CornerDownLeft size={17} />{ku ? 'گەڕانی دوگمەیی' : 'D-pad'}</button>
+      </section>
+
+      {showKeyboard && <section className="rounded-[1.5rem] border border-white/[0.07] bg-[#111218] p-4"><p className="mb-3 text-xs leading-5 text-zinc-500">{ku ? 'سەرەتا لە پێشبینینەکە خانەی نووسین هەڵبژێرە، پاشان لێرە بنووسە.' : 'First tap a text field in the preview, then type here.'}</p><form onSubmit={(event) => { event.preventDefault(); sendText(); }} className="flex gap-2"><input value={typing} onChange={(event) => setTyping(event.target.value)} placeholder={ku ? 'دەق بنووسە…' : 'Type text…'} className="min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-[#090a0e] px-3 py-3 text-sm outline-none focus:border-[#6d5dfb]/60" /><button disabled={!typing || offline} className="grid w-12 place-items-center rounded-xl bg-white text-black disabled:opacity-30"><Send size={16} /></button></form></section>}
+      {showDpad && <section className="rounded-[1.5rem] border border-white/[0.07] bg-[#111218] p-4"><DPadRemote onNavigate={(direction) => {
+        if (direction === 'back') onSendCommand('BACK');
+        else if (direction === 'home') onSendCommand('HOME');
+        else onSendCommand('NAVIGATE', undefined, undefined, direction);
+      }} /></section>}
+
+      {media && <section className="rounded-[1.5rem] border border-white/[0.07] bg-[#111218] p-4 sm:p-5">
+        <div className="flex items-center gap-4"><button disabled={offline} onClick={() => onSendCommand('TOGGLE_PLAYBACK')} className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white text-black shadow-lg">{media.playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" className="translate-x-0.5" />}</button><div className="min-w-0 flex-1"><div className="mb-2 flex justify-between font-mono text-[10px] text-zinc-500"><span>{formatTime(media.currentTime)}</span><span>{formatTime(media.duration)}</span></div><input type="range" min={0} max={media.duration || 100} value={Math.min(media.currentTime, media.duration || 100)} onChange={(event) => onSendCommand('SEEK', Number(event.target.value))} className="w-full" /></div><button disabled={offline} onClick={() => onSendCommand(media.muted ? 'UNMUTE' : 'MUTE')} className="browser-icon">{media.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button></div>
+      </section>}
+
+      <p className="px-3 text-center text-[11px] leading-5 text-zinc-700">{ku ? 'پەڕەکە و کوکییەکانی لە Chrome ـی خۆی لاپتۆپ دەکرێنەوە. Fullscreen پەنجەرە و گەورەترین ڤیدیۆ یان پڵەیەر پڕ دەکات.' : 'Pages and their cookies stay in the computer’s Chrome profile. Fullscreen expands the browser window and the largest video or player.'}</p>
     </div>
-  );
+  </main>;
 };
