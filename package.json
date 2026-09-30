@@ -1,14 +1,14 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --packages=external --format=esm --outfile=build/server.js",
     "start": "node --env-file-if-exists=.env build/server.js --production",
     "preview": "npm run start",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist build",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
@@ -20,6 +20,7 @@
     "cheerio": "^1.2.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "hls.js": "^1.7.3",
     "html5-qrcode": "^2.3.8",
     "ipaddr.js": "^2.5.0",
     "lucide-react": "^0.546.0",

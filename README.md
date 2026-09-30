@@ -48,9 +48,9 @@ Try `https://www.w3schools.com/html/html5_video.asp` to test browsing a page and
 
 This is a link-and-video explorer, not a full remote browser executing another website's scripts. It cannot enumerate videos that appear only after JavaScript runs, behind sign-in, or behind access restrictions. A website home page can produce page links with no videos; follow a video page link. A page with no discoverable sources shows an honest empty state. YouTube search/channel/playlist browsing is not integrated; use an individual video page link. DRM services such as Netflix and Disney+ remain unsupported. No authentication, embedding protections, or DRM are bypassed.
 
-Public-page requests require a paired controller token, are rate-limited, and accept public HTTPS URLs only. DNS addresses are checked and pinned for every connection and redirect; private networks, credentials, and custom ports are rejected. Page size and request time are bounded. External scripts and HTML are never executed or injected into the controller.
+Public-page requests require a paired controller token, are rate-limited, and accept public HTTPS URLs only. DNS addresses are checked and pinned for every connection and redirect; private networks, credentials, and custom ports are rejected. Page size and request time are bounded. The discovery server does not execute third-party scripts. Optional page previews load the original URL in a sandboxed cross-origin iframe, rather than injecting HTML into the application.
 
-Direct HTML5 sources support browser-compatible codecs. HLS requires native support in this version. Browser volume/fullscreen policies vary; the receiver may need a local tap to enable playback, sound, or fullscreen. Back/forward navigates URLs opened through this app, not a third-party webpage's internal history.
+Direct HTML5 sources support browser-compatible codecs. HLS uses native support or HLS.js where available. Browser volume/fullscreen policies vary; the receiver may need a local tap to enable playback, sound, or fullscreen. Back/forward navigates URLs opened through this app, not a third-party webpage's internal history.
 
 ## Deploy on Railway
 
@@ -76,3 +76,20 @@ npm test
 ```
 
 Integration tests start real development and production servers and check the Vite HMR WebSocket, code/QR pairing, command and state delivery, unauthorized access, token-based reconnection, invalid payload handling, production frontend/API serving, public webpage discovery, provider URL parsing, and website-browser access/network restrictions.
+
+
+## Web browser workspace — v0.2
+
+The controller now has an address bar, back/forward/reload, locally stored bookmarks, a page preview, filterable page links, and separate video/player discovery. Public embedded pages are inspected up to depth 2, with at most 4 additional requests and a 10-second additional deadline. Inline literal media URLs and lazy-loaded frame/video attributes are recognized without executing third-party scripts on the server.
+
+External iframe players can be sent directly to the TV. These remain third-party web pages: use their own controls on the TV. The phone cannot read or control arbitrary cross-origin players. Sites using X-Frame-Options or CSP frame restrictions may refuse both page previews and TV embedding. The UI always offers opening the original site in a separate browser tab. Navigating inside a cross-origin preview does not update the workspace address; enter the new page URL to discover its sources. ASP.NET postback server selection is available only inside the original/preview page, not in the source discovery service.
+
+The supplied Kurd Cinema example uses a third-party `hgcloud.to` iframe. Its player URL can now be discovered, but this does not guarantee that the player permits embedding or that its stream works outside its original page. Script-generated, cookie-bound, expiring or protected media remains subject to the provider's restrictions. There is no remote browser, screen mirroring, media proxy, DRM bypass, or cookie transfer.
+
+HLS (`.m3u8`) uses native playback where available and HLS.js on compatible MediaSource browsers. HLS.js requires the stream host to permit cross-origin requests. Direct and provider playback still use the existing paired TV browser, not Chromecast/DLNA device discovery.
+
+Fullscreen hides CastSync title, status, navigation strip, action toasts and playback HUD. The idle HUD timer is no longer reset by time-update events. Essential playback errors or gesture prompts may still appear when playback cannot start. Controls supplied by a third-party player are managed by that player.
+
+Deploy as a Node service using `npm ci --include=dev && npm run build` and `npm start` on any suitable Node 24 host with WebSocket support. Railway is optional; a static-only host cannot run the pairing and discovery server.
+
+For this update, runtime/browser tests and the test suite were intentionally not run at the user's request. Build and TypeScript compilation are packaging checks, not evidence that the supplied movie or every external provider plays.

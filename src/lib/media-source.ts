@@ -34,5 +34,6 @@ export interface WebsitePage {
   url: string;
   videos: WebsiteVideo[];
   links: { title: string; url: string }[];
+  players?: { title: string; url: string }[];
   note?: string;
 }

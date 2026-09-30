@@ -64,21 +64,22 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   const [unmutePrompt, setUnmutePrompt] = useState<boolean>(false);
   const [lastActionToast, setLastActionToast] = useState<string | null>(null);
   const [showHud, setShowHud] = useState<boolean>(true);
+  const [hudActivity, setHudActivity] = useState(0);
+  const [reloadMedia, setReloadMedia] = useState(0);
   const [iframeError, setIframeError] = useState<boolean>(false);
 
-  // Auto-hide HUD on TV after 4 seconds of idle
+  // Playback updates must not restart the idle timer.
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (isPlaying) {
-        setShowHud(false);
-      }
+      setShowHud(false);
     }, 4000);
     return () => clearTimeout(timer);
-  }, [isPlaying, currentTime]);
+  }, [isPlaying, hudActivity]);
 
   const showToast = (msg: string) => {
     setLastActionToast(msg);
     setShowHud(true);
+    setHudActivity((value) => value + 1);
     setTimeout(() => {
       setLastActionToast((prev) => (prev === msg ? null : prev));
     }, 3000);
@@ -109,7 +110,8 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   // Monitor fullscreen change events
   useEffect(() => {
     const handleFullscreenChange = () => {
-      const isFs = !!document.fullscreenElement;
+      const isFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      if (isFs) { setShowHud(false); setLastActionToast(null); }
       setIsFullscreen(isFs);
       broadcastPlaybackState({ fullscreen: isFs });
     };
@@ -138,6 +140,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         throw new Error('Fullscreen is not supported by this browser.');
       }
       setIsFullscreen(true);
+      setShowHud(false); setLastActionToast(null);
       broadcastPlaybackState({ fullscreen: true });
     } catch (err: any) {
       console.warn('Fullscreen blocked by browser policy:', err);
@@ -147,7 +150,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
   const triggerExitFullscreen = async () => {
     try {
-      if (document.fullscreenElement) {
+      if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
         if (document.exitFullscreen) {
           await document.exitFullscreen();
         } else if ((document as any).webkitExitFullscreen) {
@@ -195,6 +198,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   const handleRemoteCommand = useCallback(
     async (cmd: RemoteCommand) => {
       setShowHud(true);
+      setHudActivity((value) => value + 1);
       const video = videoRef.current;
       if (contentType === 'embed' && ['PLAY', 'PAUSE', 'TOGGLE_PLAYBACK', 'SEEK', 'SEEK_FORWARD', 'SEEK_BACKWARD', 'SET_VOLUME', 'VOLUME_UP', 'VOLUME_DOWN', 'MUTE', 'UNMUTE', 'REFRESH'].includes(cmd.action)) return;
 
@@ -220,12 +224,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
             try { setMediaTitle(decodeURIComponent(derivedTitle)); } catch { setMediaTitle(derivedTitle); }
             setIframeError(false);
 
-            if (video) {
-              video.src = url;
-              video.load();
-              pendingPlay.current = false;
-              attemptPlay(video);
-            }
+            setReloadMedia((value) => value + 1);
           } else {
             const embed = embeddedSource(url);
             setContentType(embed ? 'embed' : 'web');
@@ -360,7 +359,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
         case 'FULLSCREEN': {
           await triggerFullscreen();
-          showToast('Fullscreen requested');
+          // Keep fullscreen clear of action text.
           break;
         }
 
@@ -410,8 +409,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         case 'REFRESH': {
           showToast('Reloading media');
           if (contentType === 'video' && video) {
-            video.load();
-            attemptPlay(video);
+            setReloadMedia((value) => value + 1);
           } else if (iframeRef.current) {
             iframeRef.current.src = currentUrl;
           }
@@ -423,10 +421,8 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           setContentType('video');
           setCurrentUrl(DEFAULT_DEMO_VIDEO);
           setMediaTitle(DEFAULT_DEMO_TITLE);
-          if (video) {
-            video.src = DEFAULT_DEMO_VIDEO;
-            video.load();
-          }
+          pendingPlay.current = true;
+          setReloadMedia((value) => value + 1);
           break;
         }
 
@@ -468,10 +464,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
     video.volume = volume;
     video.muted = isMuted;
-    if (pendingPlay.current) {
-      pendingPlay.current = false;
-      attemptPlay(video);
-    }
+
 
     const onPlay = () => {
       setIsPlaying(true);
@@ -509,6 +502,10 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       broadcastPlaybackState({ duration: video.duration || 0, currentTime: video.currentTime });
     };
 
+    const onNativeFullscreen = () => { setIsFullscreen(true); setShowHud(false); setLastActionToast(null); broadcastPlaybackState({ fullscreen: true }); };
+    const onNativeFullscreenEnd = () => { setIsFullscreen(false); broadcastPlaybackState({ fullscreen: false }); };
+    video.addEventListener('webkitbeginfullscreen', onNativeFullscreen);
+    video.addEventListener('webkitendfullscreen', onNativeFullscreenEnd);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('timeupdate', onTimeUpdate);
@@ -518,6 +515,8 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
     video.addEventListener('loadedmetadata', onLoadedMetadata);
 
     return () => {
+      video.removeEventListener('webkitbeginfullscreen', onNativeFullscreen);
+      video.removeEventListener('webkitendfullscreen', onNativeFullscreenEnd);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('timeupdate', onTimeUpdate);
@@ -527,6 +526,40 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
     };
   }, [broadcastPlaybackState, contentType]);
+
+  // Native HLS on Safari; MediaSource playback through HLS.js elsewhere.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || contentType !== 'video') return;
+    let disposed = false;
+    let destroy: (() => void) | undefined;
+    setMediaError(null);
+    const start = () => { if (!disposed) { pendingPlay.current = false; attemptPlay(video); } };
+    if (/\.m3u8(?:\?|$)/i.test(currentUrl) && !video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.removeAttribute('src'); video.load();
+      void import('hls.js').then(({ default: Hls }) => {
+        if (disposed) return;
+        if (!Hls.isSupported()) {
+          const error = 'HLS playback is unavailable on this browser. Try another player or source.';
+          setMediaError(error); setIsPlaying(false); broadcastPlaybackState({ playing: false, error }); return;
+        }
+        const hls = new Hls({ maxBufferLength: 30, backBufferLength: 30 });
+        destroy = () => hls.destroy();
+        hls.on(Hls.Events.MANIFEST_PARSED, start);
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal || disposed) return;
+          const error = 'This stream could not be loaded. It may require site cookies, a permitted origin, or another video source.';
+          setMediaError(error); setIsPlaying(false); broadcastPlaybackState({ playing: false, error });
+          hls.destroy();
+        });
+        hls.loadSource(currentUrl); hls.attachMedia(video);
+      }).catch(() => { if (!disposed) setMediaError('Unable to load the stream player. Refresh this page.'); });
+    } else {
+      video.src = currentUrl; video.load(); start();
+    }
+    return () => { disposed = true; destroy?.(); video.pause(); };
+    // Source setup is independent of playback state broadcasts.
+  }, [currentUrl, contentType, reloadMedia]);
 
   // Periodic heartbeat broadcast
   useEffect(() => {
@@ -561,7 +594,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
   return (
     <div
       ref={containerRef}
-      onMouseMove={() => setShowHud(true)}
+      onMouseMove={() => { if (!isFullscreen) { setShowHud(true); setHudActivity((value) => value + 1); } }}
       onClick={() => {
         if (fullscreenPrompt) {
           triggerFullscreen();
@@ -571,7 +604,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           setUnmutePrompt(false);
         }
       }}
-      className="relative w-full h-[calc(100vh-65px)] bg-black flex flex-col items-center justify-center overflow-hidden select-none"
+      className={`receiver-screen relative w-full h-[100dvh] bg-black flex flex-col items-center justify-center overflow-hidden select-none ${isFullscreen ? "is-fullscreen" : ""}`}
     >
       {/* Fullscreen User Gesture Prompt Overlay */}
       {fullscreenPrompt && (
@@ -594,11 +627,11 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         </div>
       )}
 
-      {mediaError && (
+      {mediaError && (!isFullscreen || !isPlaying) && (
         <div role="alert" className="absolute top-8 z-40 bg-[#18181D] p-4 rounded-xl text-amber-300">{mediaError}</div>
       )}
       {/* Unmute Prompt Banner */}
-      {unmutePrompt && (
+      {unmutePrompt && !isFullscreen && (
         <div
           onClick={() => {
             if (videoRef.current) {
@@ -621,15 +654,15 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
         <div className="relative w-full h-full flex items-center justify-center bg-black">
           <video
             ref={videoRef}
-            src={currentUrl}
             playsInline
             controls={false}
             onError={() => {
               const error = 'Unable to load media. Use a direct video URL supported by this browser.';
               setMediaError(error);
+              setIsPlaying(false);
               broadcastPlaybackState({ playing: false, error });
             }}
-            className="w-full h-full object-contain max-h-screen"
+            className="w-full h-full object-contain"
             onClick={() => {
               if (videoRef.current) {
                 if (videoRef.current.paused) attemptPlay(videoRef.current);
@@ -641,7 +674,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       ) : (
         /* Webpage or Embedded Player Viewer */
         <div className="relative w-full h-full flex flex-col bg-[#111114]">
-          <div className="w-full bg-[#18181D] border-b border-white/10 px-4 py-2 flex items-center justify-between text-xs text-zinc-300 z-10">
+          <div className="receiver-chrome w-full bg-[#18181D] border-b border-white/10 px-4 py-2 flex items-center justify-between text-xs text-zinc-300 z-10">
             <div className="flex items-center gap-2 truncate max-w-xl">
               <Globe className="w-4 h-4 text-[#6D5DFB] flex-shrink-0" />
               <span className="truncate">{currentUrl}</span>
@@ -657,8 +690,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
           <div className="relative flex-1 w-full h-full bg-white">
             <iframe
               ref={iframeRef}
-              src={currentUrl}
-              title="Remote Web View"
+                title="Remote Web View"
               className="w-full h-full border-none"
               allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
@@ -690,7 +722,7 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
       )}
 
       {/* Floating Action HUD Banner */}
-      {lastActionToast && (
+      {lastActionToast && !isFullscreen && (
         <div className="absolute top-8 left-1/2 -translate-x-1/2 z-40 bg-[#18181D]/90 border border-white/20 px-6 py-2.5 rounded-full backdrop-blur-xl shadow-2xl flex items-center gap-2.5 text-white font-medium text-sm tracking-wide">
           <Sparkles className="w-4 h-4 text-[#6D5DFB] animate-spin" />
           <span>{lastActionToast}</span>
@@ -699,8 +731,8 @@ export const ReceiverPlayer: React.FC<ReceiverPlayerProps> = ({
 
       {/* Cinematic TV Overlay HUD */}
       <div
-        className={`absolute bottom-0 inset-x-0 z-30 transition-opacity duration-500 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 sm:p-8 ${
-          showHud ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        className={`receiver-chrome absolute bottom-0 inset-x-0 z-30 transition-opacity duration-500 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 sm:p-8 ${
+          showHud && !isFullscreen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
       >
         <div className="max-w-6xl mx-auto flex flex-col space-y-3">

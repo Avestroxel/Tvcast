@@ -269,7 +269,7 @@ export default function App() {
       className="min-h-screen bg-[#09090B] text-white flex flex-col selection:bg-[#6D5DFB]/30"
     >
       {/* Universal Top Header */}
-      <Header
+      {!(mode === 'receiver' && receiverStep === 'player') && <Header
         mode={mode}
         peerDevice={peerDevice}
         connectionStatus={connectionStatus}
@@ -278,7 +278,7 @@ export default function App() {
         onToggleLang={toggleLanguage}
         onExit={handleExit}
         onOpenSplitDemo={() => setShowSplitSimulator(true)}
-      />
+      />}
 
       {pairingError && mode === 'receiver' && (
         <div role="alert" className="p-4 text-center text-amber-300">{pairingError}</div>

@@ -54,6 +54,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   const [localVolume, setLocalVolume] = useState<number | null>(null);
   const [optimisticPlaying, setOptimisticPlaying] = useState<boolean | null>(null);
   const [optimisticMuted, setOptimisticMuted] = useState<boolean | null>(null);
+  const [workspaceTab, setWorkspaceTab] = useState<'browse' | 'remote'>('browse');
   const [activeTab, setActiveTab] = useState<'media' | 'dpad'>('media');
   const [showPresets, setShowPresets] = useState<boolean>(false);
 
@@ -105,7 +106,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
   };
 
   return (
-    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between max-w-lg mx-auto p-4 sm:p-6 pb-8 space-y-6 select-none">
+    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between remote-workspace w-full max-w-3xl mx-auto p-4 sm:p-6 pb-8 space-y-4 select-none">
       {/* Top Remote Header */}
       <div className="bg-[#111114] border border-white/10 rounded-3xl p-4 sm:p-5 shadow-xl flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -132,10 +133,18 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
 
       {(!playbackState.supportsRemoteMedia || playbackState.error) && (
         <p role="status" className="text-sm text-amber-300 text-center">
-          {playbackState.error || 'Remote playback is unavailable for this webpage. Choose a supported video from Browse websites.'}
+          {playbackState.error || (lang === 'ku' ? 'پڵەیەری وێبسایت: کۆنترۆڵەکانی خودی پڵەیەر لە TV بەکار بێنە، یان سەرچاوەی ڤیدیۆیەک هەڵبژێرە.' : 'Website player: use its controls on the TV, or choose a video source for phone playback controls.')}
         </p>
       )}
-      <WebsiteBrowser lang={lang} service={service} disabled={connectionStatus !== 'connected'} onCast={(url, kind) => onSendCommand('OPEN_URL', kind, url)} />
+      <nav aria-label={lang === 'ku' ? 'بەشەکان' : 'Workspace'} className="grid grid-cols-2 gap-1 rounded-2xl border border-white/[0.06] bg-[#111218] p-1.5">
+        <button aria-pressed={workspaceTab === 'browse'} onClick={() => setWorkspaceTab('browse')} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-medium ${workspaceTab === 'browse' ? 'bg-white/[0.08] text-white' : 'text-zinc-500'}`}><Globe size={17} />{lang === 'ku' ? 'گەڕان' : 'Browser'}</button>
+        <button aria-pressed={workspaceTab === 'remote'} onClick={() => setWorkspaceTab('remote')} className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-medium ${workspaceTab === 'remote' ? 'bg-white/[0.08] text-white' : 'text-zinc-500'}`}><Sliders size={17} />{lang === 'ku' ? 'کۆنترۆڵ' : 'Remote'}</button>
+      </nav>
+      <div hidden={workspaceTab !== 'browse'}>
+        <WebsiteBrowser lang={lang} service={service} disabled={connectionStatus !== 'connected'} onCast={(url, kind) => { onSendCommand('OPEN_URL', kind, url); setWorkspaceTab('remote'); }} />
+      </div>
+      <section hidden={workspaceTab !== 'remote'} className="space-y-4">
+
       <div className="rounded-2xl border border-white/10 bg-[#111114] p-4">
         {/* Quick presets toggle */}
         <div className="flex items-center justify-between pt-1">
@@ -241,7 +250,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
             {/* Big Play / Pause Toggle with instantaneous state switch */}
             <button
               onClick={handleTogglePlayback}
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[#6D5DFB] hover:bg-[#5B4BE3] active:scale-90 text-white flex items-center justify-center transition shadow-[0_0_30px_rgba(109,93,251,0.5)] cursor-pointer focus:outline-none"
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[#6D5DFB] hover:bg-[#5B4BE3] active:scale-90 text-white flex items-center justify-center transition shadow-lg shadow-black/20 cursor-pointer focus:outline-none"
               title={currentPlaying ? 'Pause' : 'Play'}
             >
               {currentPlaying ? (
@@ -433,6 +442,7 @@ export const RemoteController: React.FC<RemoteControllerProps> = ({
           </button>
         </div>
       </div>
+      </section>
     </div>
   );
 };

@@ -82,9 +82,10 @@ export function parseWebsite(html: string, pageUrl: string): WebsitePage {
   const page = new URL(pageUrl);
   let base = page.href;
   try { base = websiteUrl(new URL($('base').attr('href') || page.href, page).href).href; } catch {}
-  const title = ($('title').first().text().trim() || page.hostname).slice(0, 200);
+  const title = ($('meta[property="og:title"]').attr('content') || $('h1').first().text().trim() || $('title').first().text().trim() || page.hostname).slice(0, 200);
   const videos = new Map<string, WebsiteVideo>();
   const links = new Map<string, { title: string; url: string }>();
+  const players = new Map<string, { title: string; url: string }>();
   const absolute = (value?: string) => {
     try { return value ? websiteUrl(new URL(value, base).href).href : null; } catch { return null; }
   };
@@ -102,12 +103,17 @@ export function parseWebsite(html: string, pageUrl: string): WebsitePage {
   $('video').each((_i, element) => {
     const video = $(element);
     const label = video.attr('title') || video.attr('aria-label') || title;
-    addVideo(video.attr('src'), label, true);
+    addVideo(video.attr('src') || video.attr('data-src'), label, true);
     video.find('source').each((_j, source) => { addVideo($(source).attr('src'), label, true); });
   });
   $('iframe').each((_i, element) => {
     const frame = $(element);
-    if (embeddedSource(absolute(frame.attr('src')) || '')) addVideo(frame.attr('src'), frame.attr('title') || title);
+    const src = frame.attr('src') || frame.attr('data-src');
+    const url = absolute(src);
+    if (!url) return;
+    if (!addVideo(src, frame.attr('title') || title) && players.size < 12) {
+      players.set(url, { title: frame.attr('title') || new URL(url).hostname, url });
+    }
   });
   $('meta[property="og:video"],meta[property="og:video:url"],meta[property="og:video:secure_url"]').each((_i, element) => {
     addVideo($(element).attr('content'), title);
@@ -131,6 +137,19 @@ export function parseWebsite(html: string, pageUrl: string): WebsitePage {
       }
     } catch { /* Invalid structured metadata does not prevent normal browsing. */ }
   });
+  // Read literal player configuration only. Never evaluate a site's JavaScript.
+  // Covers common JW Player, Video.js and HLS setup strings, including JSON escapes.
+  $('script:not([src])').each((_i, element) => {
+    const text = $(element).text().slice(0, 512000)
+      .replace(/\\u002[fF]/g, '/').replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    for (const match of text.matchAll(/["']([^"'\s<>]{1,4096})["']/g)) {
+      if (directVideoSource(absolute(match[1]) || '')) addVideo(match[1], title);
+    }
+  });
+  $('[data-video],[data-file],[data-source]').each((_i, element) => {
+    const item = $(element);
+    addVideo(item.attr('data-video') || item.attr('data-file') || item.attr('data-source'), item.attr('title') || title);
+  });
   $('a[href]').each((_i, element) => {
     const anchor = $(element);
     const url = absolute(anchor.attr('href'));
@@ -140,7 +159,7 @@ export function parseWebsite(html: string, pageUrl: string): WebsitePage {
     if (label && links.size < 80 && !links.has(url)) links.set(url, { title: label, url });
   });
   return {
-    title, url: page.href, videos: [...videos.values()], links: [...links.values()],
+    title, url: page.href, videos: [...videos.values()], links: [...links.values()], players: [...players.values()],
     note: videos.size ? undefined : 'No selectable videos were found in this public page. Follow a page link below, or open a specific video page. Videos loaded after signing in or by scripts may not be available here.',
   };
 }
@@ -162,5 +181,29 @@ export async function browseWebsite(value: string): Promise<WebsitePage> {
   }
   const document = await publicDocument(url);
   if (!document.type.includes('text/html')) throw new Error('This address is not a webpage.');
-  return parseWebsite(document.text, document.url);
+  const result = parseWebsite(document.text, document.url);
+  const visited = new Set([document.url]);
+  const queue = (result.players || []).map((player) => ({ ...player, depth: 1 }));
+  const deadline = Date.now() + 10000;
+  let requests = 0;
+  // Follow a bounded number of public embedded pages, retaining every security
+  // check used for the original page. One unsupported frame cannot fail browsing.
+  while (queue.length && requests < 4 && Date.now() < deadline) {
+    const next = queue.shift()!;
+    if (visited.has(next.url)) continue;
+    visited.add(next.url); requests++;
+    try {
+      const nested = await publicDocument(next.url, 0, Math.min(deadline, Date.now() + 3500));
+      if (!nested.type.includes('text/html')) continue;
+      const child = parseWebsite(nested.text, nested.url);
+      for (const video of child.videos) {
+        if (result.videos.length < 60 && !result.videos.some((item) => item.url === video.url)) result.videos.push(video);
+      }
+      if (next.depth < 2) queue.push(...(child.players || []).map((player) => ({ ...player, depth: next.depth + 1 })));
+    } catch { /* Retain the original player link even if inspection is unavailable. */ }
+  }
+  result.note = result.videos.length ? undefined : (result.players?.length
+    ? 'This page uses an external player. Open the player on your TV or inspect its page for video sources. Its own controls may be required.'
+    : result.note);
+  return result;
 }

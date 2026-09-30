@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   const t = translations[lang] || translations.en;
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/[0.06] bg-[#09090B]/85 backdrop-blur-xl px-4 py-3 sm:px-6">
+    <header className="app-header sticky top-0 z-40 w-full border-b border-white/[0.06] bg-[#09090B]/85 backdrop-blur-xl px-4 py-3 sm:px-6">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
         {/* Logo and Mode */}
         <div className="flex items-center gap-3">
@@ -38,7 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center gap-2.5 ${mode !== 'home' ? 'cursor-pointer hover:opacity-85' : ''}`}
             title={mode !== 'home' ? 'Return to Home' : 'CastSync'}
           >
-            <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[#6D5DFB]/15 border border-[#6D5DFB]/30 text-[#6D5DFB] shadow-[0_0_15px_rgba(109,93,251,0.25)]">
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[#6D5DFB]/15 border border-[#6D5DFB]/30 text-[#6D5DFB] ">
               <Cast className="h-5 w-5" />
               {connectionStatus === 'connected' && (
                 <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
@@ -51,7 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-base font-bold tracking-tight text-white">CastSync</span>
                 {mode !== 'home' && (
-                  <span className="rounded-md bg-white/[0.08] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
+                  <span className="hidden sm:inline-block rounded-md bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
                     {mode === 'receiver' ? (lang === 'ku' ? 'ئامێری کۆنتڕۆڵکراو' : 'Controlled Device') : (lang === 'ku' ? 'کۆنتڕۆڵ' : 'Controller')}
                   </span>
                 )}

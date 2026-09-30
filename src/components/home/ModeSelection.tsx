@@ -1,8 +1,7 @@
 import React from 'react';
-import { Smartphone, Tv, Sparkles, ArrowRight, ShieldCheck, Zap, Radio, Laptop } from 'lucide-react';
+import { Smartphone, Tv, ArrowUpRight, Globe, Radio, Laptop, ArrowRight } from 'lucide-react';
 import { DeviceInfo } from '../../types';
-import { DeviceBadge } from '../common/DeviceBadge';
-import { Language, translations } from '../../lib/i18n';
+import { Language } from '../../lib/i18n';
 
 interface ModeSelectionProps {
   currentDevice: DeviceInfo;
@@ -10,137 +9,17 @@ interface ModeSelectionProps {
   onOpenSplitDemo: () => void;
   lang?: Language;
 }
-
-export const ModeSelection: React.FC<ModeSelectionProps> = ({
-  currentDevice,
-  onSelectMode,
-  onOpenSplitDemo,
-  lang = 'en',
-}) => {
-  const t = translations[lang] || translations.en;
-
-  return (
-    <div className="min-h-[calc(100vh-65px)] flex flex-col justify-between p-4 sm:p-6 lg:p-12 max-w-6xl mx-auto">
-      {/* Top Banner / Device Identification */}
-      <div className="flex flex-col items-center text-center space-y-4 pt-4 sm:pt-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/10 text-xs text-zinc-300">
-          <span className="text-zinc-500">{t.thisDevice}</span>
-          <DeviceBadge name={currentDevice.name} type={currentDevice.type} size="sm" />
-        </div>
-
-        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white max-w-3xl leading-tight">
-          {t.heroTitle}
-        </h1>
-
-        <p className="text-sm sm:text-lg text-zinc-400 max-w-xl">
-          {t.heroDesc}
-        </p>
-      </div>
-
-      {/* Two Large Touch-Friendly Mode Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-8 sm:my-12">
-        {/* Card 1: Control Another Device */}
-        <button
-          onClick={() => onSelectMode('controller')}
-          className="group relative flex flex-col justify-between text-left p-6 sm:p-8 rounded-3xl bg-[#111114] border border-white/10 hover:border-[#6D5DFB]/50 transition-all duration-300 hover:shadow-[0_0_35px_rgba(109,93,251,0.18)] active:scale-[0.99] cursor-pointer overflow-hidden focus:outline-none focus:ring-2 focus:ring-[#6D5DFB]"
-        >
-          {/* Subtle background glow */}
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 rounded-full bg-[#6D5DFB]/10 blur-3xl group-hover:bg-[#6D5DFB]/20 transition-all" />
-
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div className="w-16 h-16 rounded-2xl bg-[#6D5DFB]/15 border border-[#6D5DFB]/30 flex items-center justify-center text-[#6D5DFB] shadow-inner">
-                <Smartphone className="w-8 h-8 group-hover:scale-110 transition-transform duration-200" />
-              </div>
-              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-400 group-hover:text-white group-hover:bg-[#6D5DFB]/20 transition">
-                {lang === 'ku' ? 'شێوازی کۆنتڕۆڵ' : 'Remote Mode'}
-              </span>
-            </div>
-
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 tracking-tight group-hover:text-[#A594FD] transition-colors">
-              {t.controlAnother}
-            </h2>
-            <p className="text-sm sm:text-base text-zinc-400 leading-relaxed">
-              {t.controlAnotherDesc}
-            </p>
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-white/[0.08] flex items-center justify-between">
-            <span className="text-xs text-zinc-400 font-medium">
-              {lang === 'ku' ? 'سکانی QR یان کۆدی ٦ ژمارەیی' : 'Scan QR or enter 6-digit code'}
-            </span>
-            <div className="flex items-center gap-1 text-sm font-semibold text-white group-hover:translate-x-1 transition-transform">
-              <span>{t.startController}</span>
-              <ArrowRight className="w-4 h-4 text-[#6D5DFB]" />
-            </div>
-          </div>
-        </button>
-
-        {/* Card 2: Let This Device Be Controlled */}
-        <button
-          onClick={() => onSelectMode('receiver')}
-          className="group relative flex flex-col justify-between text-left p-6 sm:p-8 rounded-3xl bg-[#111114] border border-white/10 hover:border-emerald-500/50 transition-all duration-300 hover:shadow-[0_0_35px_rgba(53,208,127,0.18)] active:scale-[0.99] cursor-pointer overflow-hidden focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          {/* Subtle background glow */}
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 rounded-full bg-emerald-500/10 blur-3xl group-hover:bg-emerald-500/20 transition-all" />
-
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-inner">
-                <Tv className="w-8 h-8 group-hover:scale-110 transition-transform duration-200" />
-              </div>
-              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-400 group-hover:text-white group-hover:bg-emerald-500/20 transition">
-                {lang === 'ku' ? 'شێوازی پیشاندان' : 'Display Mode'}
-              </span>
-            </div>
-
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 tracking-tight group-hover:text-emerald-300 transition-colors">
-              {t.beControlled}
-            </h2>
-            <p className="text-sm sm:text-base text-zinc-400 leading-relaxed">
-              {t.beControlledDesc}
-            </p>
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-white/[0.08] flex items-center justify-between">
-            <span className="text-xs text-zinc-400 font-medium">
-              {lang === 'ku' ? 'گونجاو بۆ TV و شاشەی گەورە' : 'TV & Big Screen Optimized'}
-            </span>
-            <div className="flex items-center gap-1 text-sm font-semibold text-white group-hover:translate-x-1 transition-transform">
-              <span>{t.readyToReceive}</span>
-              <ArrowRight className="w-4 h-4 text-emerald-400" />
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {/* Simulator Shortcut & Feature Highlights */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-white/[0.06] text-xs text-zinc-400">
-        <div className="flex flex-wrap items-center gap-4 sm:gap-6 justify-center sm:justify-start">
-          <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>{t.encrypted}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span>{t.realtimeSync}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Radio className="w-4 h-4 text-[#A594FD]" />
-            <span>{t.localPlayback}</span>
-          </div>
-        </div>
-
-        {/* Quick single-screen test */}
-        <button
-          onClick={onOpenSplitDemo}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10 transition cursor-pointer"
-          title="Open split-screen simulator"
-        >
-          <Laptop className="w-3.5 h-3.5 text-[#6D5DFB]" />
-          <span>{t.splitDemo}</span>
-        </button>
-      </div>
+export const ModeSelection: React.FC<ModeSelectionProps> = ({ currentDevice, onSelectMode, onOpenSplitDemo, lang = 'en' }) => {
+  const ku = lang === 'ku';
+  return <div className="mx-auto w-full max-w-5xl px-5 py-10 sm:px-8 sm:py-16">
+    <div className="mb-10 flex items-center gap-2 text-xs text-zinc-500"><span className="h-1.5 w-1.5 rounded-full bg-[#b1a7ff]" />{currentDevice.name}<span className="ms-auto">{ku ? 'گەڕان · هەڵبژاردن · پخشکردن' : 'BROWSE · CHOOSE · CAST'}</span></div>
+    <div className="max-w-2xl"><p className="eyebrow mb-4">{ku ? 'شاشەیەکی گەورەتر، بە ئاسانی' : 'A BIGGER SCREEN, SIMPLY'}</p><h1 className="text-4xl font-semibold leading-[1.15] tracking-tight sm:text-6xl">{ku ? 'لە مۆبایلەکەت بگەڕێ.' : 'Find it on your phone.'}<br /><span className="text-zinc-500">{ku ? 'لە شاشەکەت بیبینە.' : 'Watch it on your screen.'}</span></h1><p className="mt-6 max-w-lg text-sm leading-7 text-zinc-400 sm:text-base">{ku ? 'مۆبایل و شاشەکەت پێکەوە ببەستە. لە پەڕەکان بگەڕێ، ڤیدیۆیەک هەڵبژێرە و پخشەکە لە شوێنی خۆت کۆنترۆڵ بکە.' : 'Pair your phone with your screen. Explore pages, select a video, and keep playback controls in your hand.'}</p></div>
+    <div className="mt-10 grid gap-4 md:grid-cols-2">
+      {([
+        { mode: 'controller', icon: Smartphone, step: '01', title: ku ? 'مۆبایلەکەم بەکار دەهێنم' : 'Use my phone', description: ku ? 'کۆدی شاشەکە داخڵ بکە، پاشان ڤیدیۆیەک بدۆزەوە.' : 'Enter the code from your screen, then find something to watch.', action: ku ? 'گەڕان دەست پێ بکە' : 'Start browsing' },
+        { mode: 'receiver', icon: Tv, step: '02', title: ku ? 'ئەمە شاشەکەمە' : 'This is my screen', description: ku ? 'کۆدی پەیوەستکردن پیشان بدە و چاوەڕێی مۆبایلەکەت بە.' : 'Show a pairing code and get ready to receive a video.', action: ku ? 'شاشەکە ئامادە بکە' : 'Set up screen' },
+      ] as const).map((item) => <button key={item.mode} onClick={() => onSelectMode(item.mode)} className="group rounded-3xl border border-white/[0.08] bg-[#111218] p-6 text-start transition hover:border-white/20 hover:bg-[#15161d] sm:p-8"><div className="mb-7 flex items-center justify-between"><span className="grid h-12 w-12 place-items-center rounded-2xl border border-white/[0.07] bg-white/[0.03] text-[#b1a7ff]"><item.icon size={23} /></span><span className="font-mono text-xs text-zinc-600">{item.step}</span></div><h2 className="text-xl font-semibold tracking-tight">{item.title}</h2><p className="mt-3 min-h-12 text-sm leading-6 text-zinc-500">{item.description}</p><div className="mt-7 flex items-center justify-between border-t border-white/[0.06] pt-5 text-sm text-zinc-300"><span>{item.action}</span><ArrowUpRight size={19} className="text-zinc-500 transition group-hover:text-[#b1a7ff]" /></div></button>)}
     </div>
-  );
+    <div className="mt-8 flex flex-wrap items-center gap-5 border-t border-white/[0.06] pt-5 text-xs text-zinc-500"><span className="flex items-center gap-2"><Globe size={14} />{ku ? 'بێ دامەزراندنی ئەپ' : 'No app to install'}</span><span className="flex items-center gap-2"><Radio size={14} />{ku ? 'کۆنترۆڵ لە مۆبایل' : 'Phone playback controls'}</span><button onClick={onOpenSplitDemo} className="ms-auto flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5 hover:text-zinc-300"><Laptop size={14} />{ku ? 'نموونەی دوو شاشە' : 'Split-screen demo'}<ArrowRight size={13} /></button></div>
+  </div>;
 };

@@ -1,5 +1,5 @@
 // Minimal Service Worker for CastSync PWA
-const CACHE_NAME = 'castsync-cache-v2';
+const CACHE_NAME = 'castsync-cache-v3';
 const PRECACHE_ASSETS = ['/', '/index.html', '/icon.svg', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
